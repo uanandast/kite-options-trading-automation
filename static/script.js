@@ -1,0 +1,506 @@
+// Constants
+const POLLING_INTERVAL = 1000; // 1 second
+const CHART_UPDATE_INTERVAL = 1000; // 1 second
+const MAX_DATA_POINTS = 3600; // 60 minutes at 1 second interval
+const ANIMATION_DURATION = 350; // milliseconds
+
+let straddlePriceFromSocket = 0;
+let lastKnownStraddlePrice = 0;
+let pendingChartUpdate = false;
+let lastChartUpdate = Date.now();
+
+function formatChange(val) {
+    if (val > 0) return `<span class="positive">+${val}</span>`;
+    if (val < 0) return `<span class="negative">${val}</span>`;
+    return `<span class="neutral">${val}</span>`;
+}
+
+function renderRecommendation(legs, net_delta, strangle_credit, future_price, skew) {
+    let html = `<div class="recommendation-title"><h2 class="recommendation-title">Iron Condor Recommendation</h2></div>`;
+    html += `<table class="recommendation-table" border="1">
+        <tr><th>Leg</th><th>Strike</th><th>Type</th><th>LTP</th><th>Delta</th></tr>`;
+
+    if (!legs || typeof legs !== 'object') {
+        console.warn("Invalid or missing legs data:", legs);
+        html += `<tr><td colspan="5">No legs data available.</td></tr></table>`;
+        return html;
+    }
+
+
+    const orderedLegs = ['hedge_pe','short_pe', 'short_ce', 'hedge_ce'];
+    orderedLegs.forEach(leg => {
+        const data = legs[leg];
+        if (!data) return;  // skip if data is missing
+        html += `<tr>
+            <td>${leg.replace('_', ' ').toUpperCase()}</td>
+            <td>${data.strike}</td>
+            <td>${data.type}</td>
+            <td>₹${data.ltp}</td>
+            <td>${data.delta.toFixed(2)}</td>
+        </tr>`;
+    });
+    html += `</table>`;
+    html += `
+     <div class="metrics-row">
+      <div class="metric">
+        <span class="label">Net Delta:</span>
+        <span class="value"><strong>${net_delta !== undefined && net_delta !== null ? net_delta.toFixed(3) : '-'}</strong></span>
+      </div>
+      <div class="metric">
+        <span class="label">Straddle Price:</span>
+        <span class="value"><strong>₹${strangle_credit !== undefined && strangle_credit !== null ? formatIndianNumber(strangle_credit) : '-'}</strong></span>
+      </div>
+      <div class="metric">
+        <span class="label">Synth Fut Price:</span>
+        <span class="value"><strong>₹${future_price !== undefined && future_price !== null ? formatIndianNumber(future_price) : '-'}</strong></span>
+      </div>
+      <div class="metric">
+        <span class="label">Skew:</span>
+        <span class="value"><strong>${skew !== undefined && skew !== null ? skew.toFixed(2) : '-'}</strong></span>
+      </div>
+    </div>
+  `;
+    return html;
+}
+
+
+function updateSpotDisplay(spotPrice, previousClose) {
+    const spotValueEl = document.getElementById('spot-value');
+    const spotChangeEl = document.getElementById('spot-change');
+    const container = document.getElementById('spot-price');
+
+    // Calculate point and percent change
+    const pointChange = spotPrice - previousClose;
+    const percentChange = (pointChange / previousClose) * 100;
+    const isPositive = pointChange >= 0;
+
+    // Update display
+    spotValueEl.textContent = spotPrice.toFixed(2);
+    const sign = isPositive ? "+" : "";
+    spotChangeEl.textContent = `${sign}${pointChange.toFixed(2)} (${sign}${percentChange.toFixed(2)}%)`;
+
+    // Update color
+    container.className = "price " + (isPositive ? "positive" : "negative");
+}
+
+
+
+
+
+// Polling-based fetching of option data from Flask endpoint
+async function fetchOptionData() {
+    try {
+        const res = await fetch('/option_data');
+        const json = await res.json();
+
+
+        console.log(`Fetched option data at ${new Date().toISOString()}:`, json);
+
+        const chain = json.chain || [];
+        straddlePriceFromSocket = json.strangle_credit ?? null;
+        future_price = json.future_price ?? null;
+        skew = json.skew ?? null;
+        delta = json.delta ?? null;
+
+
+        spot_price = json.spot_price ?? null;
+        previous_close = json.previous_close ?? null;
+        updateSpotDisplay(json.spot_price, json.previous_close);
+        document.getElementById('symbol').textContent = json.symbol || "Index";
+        document.getElementById("recommendation").innerHTML = renderRecommendation(
+            json.legs,
+            json.net_delta,
+            json.strangle_credit,
+            json.future_price,
+            json.skew
+        );
+
+        const strikes = {};
+        chain.forEach(row => {
+            if (!strikes[row.strike]) strikes[row.strike] = {};
+            strikes[row.strike][row.type] = row;
+        });
+
+        let html = `
+            <table>
+                <thead>
+                    <tr>
+                        <th colspan="6" class="call-header">CALLS</th>
+                        <th class="strike">Strike</th>
+                        <th colspan="6" class="put-header">PUTS</th>
+                    </tr>
+                    <tr>
+                        <th>Delta</th>
+                        <th>OI Chg%</th>
+                        <th>OI-lakh</th>
+                        <th>OI</th>
+                        <th>LTP(chg%)</th>
+                        <th>IV(chg)</th>
+                        <th class="strike"></th>
+                        <th>IV(chg)</th>
+                        <th>LTP(chg%)</th>
+                        <th>OI</th>
+                        <th>OI-lakh</th>
+                        <th>OI Chg%</th>
+                        <th>Delta</th>
+                    </tr>
+                </thead>
+                <tbody>
+        `;
+        Object.keys(strikes).sort((a, b) => a - b).forEach(strike => {
+            const ce = strikes[strike]['CE'] || {};
+            const pe = strikes[strike]['PE'] || {};
+            html += `
+                <tr>
+                    <td class="calls small">${ce.delta !== undefined ? ce.delta.toFixed(2) : ''}</td>
+                    <td class="calls small">${ce.oi_chg_pct !== undefined ? formatChange(ce.oi_chg_pct) : ''}</td>
+                    <td class="calls small">${ce.oi_lakh !== undefined ? ce.oi_lakh : ''}</td>
+                    <td class="calls small">${ce.oi !== undefined ? (ce.oi / 100000).toFixed(2) + ' L' : ''}</td>
+                    <td class="calls small">${ce.ltp !== undefined ? `₹${ce.ltp} ${ce.ltp_chg_pct !== undefined ? '(' + formatChange(ce.ltp_chg_pct) + '%)' : ''}` : ''}</td>
+                    <td class="calls small">${ce.iv !== undefined ? ce.iv.toFixed(2) : ''} ${ce.iv_chg !== undefined ? '(' + formatChange(ce.iv_chg) + ')' : ''}</td>
+                    <td class="strike">${strike}</td>
+                    <td class="puts small">${pe.iv !== undefined ? pe.iv.toFixed(2) : ''} ${pe.iv_chg !== undefined ? '(' + formatChange(pe.iv_chg) + ')' : ''}</td>
+                    <td class="puts small">${pe.ltp !== undefined ? `₹${pe.ltp} ${pe.ltp_chg_pct !== undefined ? '(' + formatChange(pe.ltp_chg_pct) + '%)' : ''}` : ''}</td>
+                    <td class="puts small">${pe.oi !== undefined ? (pe.oi / 100000).toFixed(2) + ' L' : ''}</td>
+                    <td class="puts small">${pe.oi_lakh !== undefined ? pe.oi_lakh : ''}</td>
+                    <td class="puts small">${pe.oi_chg_pct !== undefined ? formatChange(pe.oi_chg_pct) : ''}</td>
+                    <td class="puts small">${pe.delta !== undefined ? pe.delta.toFixed(2) : ''}</td>
+                </tr>
+            `;
+        });
+
+        html += '</tbody></table>';
+        document.getElementById("option-chain-table").innerHTML = html;
+
+    } catch (error) {
+        console.error('Error fetching option data:', error);
+    }
+}
+
+
+let pnlChart;
+let pnlData = {
+    pnlSeries: [],
+    straddleSeries: [],
+};
+
+// Add these functions for localStorage management
+function saveToLocalStorage() {
+    try {
+        localStorage.setItem('pnlData', JSON.stringify(pnlData));
+    } catch (error) {
+        console.error('Error saving to localStorage:', error);
+    }
+}
+
+function loadFromLocalStorage() {
+    try {
+        const savedData = localStorage.getItem('pnlData');
+        if (savedData) {
+            const parsed = JSON.parse(savedData);
+            if (Array.isArray(parsed.pnlSeries) && Array.isArray(parsed.straddleSeries)) {
+                return parsed;
+            }
+        }
+    } catch (error) {
+        console.error('Error loading from localStorage:', error);
+    }
+    return null;
+}
+
+// Modify initializeChart to use localStorage
+function initializeChart() {
+    const savedData = loadFromLocalStorage();
+    if (savedData) {
+        pnlData = savedData;
+    } else {
+        pnlData.pnlSeries = [];
+        pnlData.straddleSeries = [];
+    }
+
+    renderPnlChart();
+}
+
+async function fetchPnl() {
+    try {
+        const res = await fetch('/pnl');
+        const json = await res.json();
+
+        const ts = Date.now();
+        const netPnl = Number(json.net_pnl);
+        const apiStraddle = Number(json.straddle_price);
+        const socketStraddle = Number(straddlePriceFromSocket);
+
+        let straddlePrice = Number.isFinite(apiStraddle) ? apiStraddle : null;
+        if (!Number.isFinite(straddlePrice)) {
+            straddlePrice = Number.isFinite(socketStraddle) ? socketStraddle : null;
+        }
+        if (Number.isFinite(straddlePrice)) {
+            lastKnownStraddlePrice = straddlePrice;
+        } else {
+            straddlePrice = lastKnownStraddlePrice;
+        }
+
+        if (!Number.isFinite(netPnl) || !Number.isFinite(straddlePrice)) {
+            return;
+        }
+
+        pnlData.pnlSeries.push([ts, netPnl]);
+        pnlData.straddleSeries.push([ts, straddlePrice]);
+
+        if (pnlData.pnlSeries.length > MAX_DATA_POINTS) {
+            pnlData.pnlSeries = pnlData.pnlSeries.slice(-MAX_DATA_POINTS);
+            pnlData.straddleSeries = pnlData.straddleSeries.slice(-MAX_DATA_POINTS);
+        }
+
+        saveToLocalStorage();
+        updatePnLDisplay(json, netPnl, straddlePrice);
+
+        if (!pendingChartUpdate) {
+            pendingChartUpdate = true;
+            requestAnimationFrame(updateChart);
+        }
+    } catch (error) {
+        console.error('Error fetching PnL data:', error);
+    }
+}
+
+// Separate function for chart updates
+function updateChart() {
+    const now = Date.now();
+    if (now - lastChartUpdate >= CHART_UPDATE_INTERVAL) {
+        if (pnlChart) {
+            pnlChart.updateSeries([
+                {
+                    name: 'Net P&L',
+                    data: pnlData.pnlSeries
+                },
+                {
+                    name: 'Straddle Price',
+                    data: pnlData.straddleSeries
+                }
+            ], false);
+        }
+        lastChartUpdate = now;
+    }
+    pendingChartUpdate = false;
+}
+
+function updatePnLDisplay(json, netPnl, straddlePrice) {
+    const availableMargin = json.available_margin ?? 0;
+    document.getElementById("available-margin").textContent = 
+        `Margin: ₹${formatIndianNumber(availableMargin)}`;
+
+    const margin = json.margin;
+    const netPnlClass = netPnl === 0.0 ? 'neutral' : (netPnl > 0 ? 'positive' : 'negative');
+    const marginRatio = margin !== 0 ? netPnl / margin : 0;
+    const marginClass = marginRatio === 0.0 ? 'neutral' : (marginRatio > 0 ? 'positive' : 'negative');
+
+    const netPnlFormatted = `₹${formatIndianNumber(netPnl)}`;
+    const creditFormatted = json.Current_pos_credit !== null ?
+        `₹${formatIndianNumber(json.Current_pos_credit)}` : '₹0.00';
+    const pnlPercentFormatted = `${margin !== 0 ? (marginRatio * 100).toFixed(2) : '0.00'}%`;
+    const deltaFormatted = (typeof delta === 'number' && Number.isFinite(delta)) ? delta.toFixed(2) : '-';
+
+    document.getElementById('net-pnl').innerHTML = `
+        <span class="pnl-group">
+            <span class="label">Net P&amp;L:</span>
+            <span id="pnl-combined" class="value ${netPnlClass}">${netPnlFormatted} 
+                <span class="${marginClass}">(${pnlPercentFormatted})</span>
+            </span>
+        </span>
+        <span class="credit-group">
+            <span class="label">Current Strangle Price:</span>
+            <span id="credit-value" class="value">${creditFormatted}</span>
+        </span>
+        <span class="delta-group">
+            <span class="label">Delta:</span>
+            <span id="delta-value" class="value">${deltaFormatted}</span>
+        </span>
+    `;
+}
+
+// Update the chart options for better real-time visualization
+function renderPnlChart() {
+    const options = {
+        chart: {
+            type: 'line',
+            height: 400,
+            zoom: { enabled: true, type: 'x', autoScaleYaxis: true },
+            animations: {
+                enabled: true,
+                easing: 'easeinout',
+                dynamicAnimation: {
+                    speed: ANIMATION_DURATION
+                }
+            },
+            toolbar: {
+                show: true,
+                tools: {
+                    download: false,
+                    selection: true,
+                    zoom: true,
+                    zoomin: true,
+                    zoomout: true,
+                    pan: true,
+                    reset: true
+                }
+            },
+            background: '#0b1220',
+            foreColor: '#aeb7c6'
+        },
+        stroke: {
+            width: [2.5, 2],
+            curve: 'straight',
+            dashArray: [0, 6]
+        },
+        markers: {
+            size: 0,
+            hover: { sizeOffset: 2 }
+        },
+        series: [
+            {
+                name: 'Net P&L',
+                data: pnlData.pnlSeries,
+                color: '#1f8bff'
+            },
+            {
+                name: 'Straddle Price',
+                data: pnlData.straddleSeries,
+                color: '#21c55d'
+            }
+        ],
+        xaxis: {
+            type: 'datetime',
+            labels: {
+                datetimeUTC: false,
+                format: 'HH:mm',
+                style: { colors: '#8fa2c1' }
+            },
+            title: {
+                text: 'Time',
+                style: { color: '#8fa2c1' }
+            }
+        },
+        yaxis: [
+            {
+                seriesName: 'Straddle Price',
+                title: { text: 'Straddle Price (₹)', style: { color: '#21c55d' } },
+                labels: {
+                    style: { colors: '#8fa2c1' },
+                    formatter: val => val.toFixed(2)
+                }
+            },
+            {
+                seriesName: 'Net P&L',
+                opposite: true,
+                title: { text: 'Net P&L (₹)', style: { color: '#1f8bff' } },
+                labels: {
+                    style: { colors: '#8fa2c1' },
+                    formatter: val => val.toFixed(2)
+                }
+            }
+        ],
+        grid: {
+            borderColor: '#223049',
+            strokeDashArray: 3
+        },
+        tooltip: {
+            theme: 'dark',
+            shared: true,
+            x: { format: 'HH:mm:ss' }
+        },
+        legend: {
+            position: 'top',
+            horizontalAlign: 'center',
+            labels: { colors: '#d6e0f0' }
+        }
+    };
+
+    const chartContainer = document.querySelector('#pnl-chart');
+    chartContainer.innerHTML = '';
+    const chart = new ApexCharts(chartContainer, options);
+    chart.render();
+    pnlChart = chart;
+}
+
+// Update the clear chart function to also clear localStorage
+function clearChartData() {
+    localStorage.removeItem('pnlData');
+    pnlData.pnlSeries = [];
+    pnlData.straddleSeries = [];
+    pnlChart.updateSeries([
+        { name: 'Net P&L', data: [] },
+        { name: 'Straddle Price', data: [] }
+    ]);
+    console.log("Chart data cleared.");
+}
+
+function exportChartData() {
+    let csvContent = "data:text/csv;charset=utf-8,Time,Net P&L,Straddle Price\n";
+    pnlData.pnlSeries.forEach((point, i) => {
+        const time = new Date(point[0]).toISOString();
+        const pnl = point[1];
+        const straddle = pnlData.straddleSeries[i]?.[1] ?? '';
+        csvContent += `${time},${pnl},${straddle}\n`;
+    });
+
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement("a");
+    link.setAttribute("href", encodedUri);
+    link.setAttribute("download", "pnl_chart_data.csv");
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+}
+
+function formatIndianNumber(x) {
+    const value = Number.isFinite(Number(x)) ? Number(x) : 0;
+    const parts = value.toFixed(2).split('.');
+    let num = parts[0];
+    let lastThree = num.substring(num.length - 3);
+    let otherNumbers = num.substring(0, num.length - 3);
+    if (otherNumbers !== '')
+        lastThree = ',' + lastThree;
+    let formatted = otherNumbers.replace(/\B(?=(\d{2})+(?!\d))/g, ",") + lastThree;
+    return formatted + '.' + parts[1];
+}
+
+async function triggerManualExit() {
+    const exitButton = document.getElementById('manual-exit-btn');
+    if (!exitButton) return;
+
+    if (exitButton.disabled) return;
+    exitButton.disabled = true;
+
+    try {
+        const response = await fetch('/manual_exit', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' }
+        });
+        const payload = await response.json();
+
+        if (!response.ok) {
+            throw new Error(payload.message || 'Failed to start manual exit');
+        }
+    } catch (error) {
+        console.error('Error triggering manual exit:', error);
+        alert(error.message || 'Error triggering manual exit');
+    } finally {
+        exitButton.disabled = false;
+    }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    const exitButton = document.getElementById('manual-exit-btn');
+    if (exitButton) {
+        exitButton.addEventListener('click', triggerManualExit);
+    }
+});
+
+// Update the interval calls
+setInterval(fetchOptionData, POLLING_INTERVAL);
+fetchOptionData();
+setInterval(fetchPnl, POLLING_INTERVAL);
+initializeChart();
+fetchPnl();

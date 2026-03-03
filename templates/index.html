@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Modern Option Chain Dashboard</title>
+    
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/apexcharts"></script>
+    
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+
+    <style>
+        /* CSS Variables for easy theme management */
+        :root {
+            --background-primary: #1a1c23;
+            --background-secondary: #23252c;
+            --background-tertiary: #2c2e37;
+            --border-color: #3a3d4a;
+            --text-primary: #e0e0e0;
+            --text-secondary: #a0a0a0;
+            --accent-primary: #00aaff;
+            --accent-secondary: #ffd700;
+            --color-positive: #00d2ac;
+            --color-negative: #ff5b5b;
+            --call-color: #ff5b5b;
+            --put-color: #00d2ac;
+        }
+
+        /* General Body Styles */
+        body {
+            background-color: var(--background-primary);
+            color: var(--text-primary);
+            font-family: 'Inter', sans-serif;
+            margin: 0;
+            padding: 0;
+        }
+
+        /* Main Header */
+        .main-header {
+            background-color: var(--background-secondary);
+            padding: 15px 30px;
+            border-bottom: 1px solid var(--border-color);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .main-header h1 {
+            margin: 0;
+            font-size: 1.5em;
+            font-weight: 600;
+        }
+        .market-status {
+            display: flex;
+            align-items: center;
+            gap: 20px;
+            font-size: 1em;
+        }
+        .market-status .symbol {
+            font-weight: 600;
+        }
+        .market-status .price {
+            font-weight: 700;
+        }
+
+        /* Main Content Grid */
+        .main-content {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            padding: 20px;
+        }
+
+        /* Card styles for all panels */
+        .card {
+            background-color: var(--background-secondary);
+            border-radius: 12px;
+            padding: 25px;
+            border: 1px solid var(--border-color);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+            display: flex;
+            flex-direction: column;
+        }
+        .card-title {
+            font-size: 1.25em;
+            font-weight: 600;
+            margin: 0 0 20px 0;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        /* Left Panel: P&L Chart */
+        #pnl-chart {
+            flex-grow: 1;
+            min-height: 300px;
+        }
+        .chart-controls {
+            text-align: center;
+            margin-top: 14px;
+            display: flex;
+            gap: 10px;
+            justify-content: center;
+        }
+        .btn {
+            background-color: var(--background-tertiary);
+            color: var(--text-primary);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            padding: 10px 20px;
+            font-size: 0.9em;
+            font-weight: 500;
+            cursor: pointer;
+            transition: background-color 0.2s, transform 0.2s;
+        }
+        .btn:hover {
+            background-color: var(--accent-primary);
+            border-color: var(--accent-primary);
+            color: #fff;
+            transform: translateY(-2px);
+        }
+        .btn-danger {
+            background-color: #a13333;
+            border-color: #a13333;
+            color: #fff;
+        }
+        .btn-danger:hover {
+            background-color: #c74040;
+            border-color: #c74040;
+            color: #fff;
+        }
+        .btn-danger:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        /* Right Panel: Recommendations & P&L */
+        #recommendation {
+            margin-bottom: 20px;
+        }
+        .recommendation-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 25px;
+        }
+        .recommendation-table th, .recommendation-table td {
+            padding: 12px 10px;
+            text-align: left;
+            border-bottom: 1px solid var(--border-color);
+            font-size: 0.95em;
+        }
+        .recommendation-table th {
+            color: var(--text-secondary);
+            font-weight: 500;
+        }
+
+        #net-pnl {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 20px;
+          align-items: center;
+          justify-content: space-between;
+          font-size: 1.1em;
+          font-weight: 600;
+          padding-top: 20px;
+          border-top: 1px solid var(--border-color);
+        }
+
+        #net-pnl .label {
+          color: var(--accent-primary);
+          margin-right: 5px;
+        }
+
+        #net-pnl .value {
+          margin-right: 15px;
+        }
+
+        .pnl-group,
+        .credit-group,
+        .delta-group {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+        }
+
+        /* Option Chain Container */
+        .option-chain-container {
+            padding: 0 20px 20px 20px;
+        }
+        #option-chain-table table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.95em;
+        }
+        .price.positive {
+            color: #00d1ab;
+        }   
+        .price.negative {
+            color: #ff5b5b;
+        }
+        #option-chain-table th, #option-chain-table td {
+            padding: 14px 10px;
+            text-align: center;
+            border: 1px solid var(--border-color);
+        }
+        #option-chain-table th {
+            background-color: var(--background-tertiary);
+            color: var(--text-secondary);
+            font-weight: 600;
+        }
+        #option-chain-table tr:hover {
+            background-color: var(--background-tertiary);
+        }
+
+        /* Specific Table Cell Styling */
+        .call-header { background-color: rgba(255, 91, 91, 0.1); color: var(--call-color); }
+        .put-header { background-color: rgba(0, 210, 172, 0.1); color: var(--put-color); }
+        .calls { background-color: rgba(255, 91, 91, 0.05); }
+        .puts { background-color: rgba(0, 210, 172, 0.05); }
+
+        .strike {
+            background-color: var(--background-primary);
+            font-weight: 700;
+            font-size: 1.1em;
+        }
+        .atm-strike {
+            background-color: var(--accent-primary) !important;
+            color: #fff !important;
+            font-weight: 700;
+        }
+        
+        /* Utility Classes */
+        .positive { color: var(--color-positive); }
+        .negative { color: var(--color-negative); }
+        .neutral { color: var(--text-secondary); }
+        .highlight { color: var(--accent-secondary); font-weight: 600; }
+
+        /* Responsive Design */
+        @media (max-width: 1200px) {
+            .main-content {
+                grid-template-columns: 1fr;
+            }
+        }
+        @media (max-width: 768px) {
+            .main-header {
+                flex-direction: column;
+                gap: 10px;
+                padding: 15px;
+            }
+            .main-content {
+                padding: 10px;
+                gap: 10px;
+            }
+            .card {
+                padding: 20px;
+            }
+            #option-chain-table {
+                overflow-x: auto; /* Allow horizontal scrolling on small screens */
+            }
+        }
+    </style>
+</head>
+<body>
+
+    <header class="main-header">
+        <h1><i class="fa-solid fa-chart-line" style="color: var(--accent-primary);"></i> Option Chain Dashboard</h1>
+<div class="market-status">
+        <span id="available-margin" class="symbol" style="margin-left: 30px;">Margin: ₹0</span>
+    <span id="symbol" class="symbol">Index</span>
+    <span id="spot-price" class="price">
+        <i class="fa-solid fa-indian-rupee-sign"></i> 
+        <span id="spot-value">0.00</span>
+        <span id="spot-change" style="margin-left: 6px;">(+0.00%)</span>
+    </span>
+</div>
+    </header>
+
+    <main class="main-content">
+        <div class="card">
+            <h3 class="card-title"><i class="fa-solid fa-wave-square"></i> Live P&L</h3>
+            <div id="pnl-chart"></div>
+            <div class="chart-controls">
+                <button id="manual-exit-btn" class="btn btn-danger"><i class="fa-solid fa-circle-stop"></i> Exit Positions</button>
+            </div>
+        </div>
+
+        <div class="card">
+            <h3 class="card-title"><i class="fa-solid fa-star" style="color: var(--accent-secondary);"></i> Strategy & Vitals</h3>
+            <div id="recommendation">
+                <table class="recommendation-table">
+                   <thead><tr><th>Action</th><th>Strike</th><th>Type</th><th>Premium</th></tr></thead>
+                   <tbody id="recommendation-body">
+                   </tbody>
+                </table>
+            </div>
+
+            <div id="net-pnl" class="positive">
+  <span class="pnl-group">
+    <span class="label">Net P&amp;L:</span> 
+    <span id="pnl-combined" class="value negative">₹0.00 (0.00%)</span>
+  </span>
+  <span class="credit-group">
+    <span class="label">Current Strangle Price:</span> 
+    <span id="credit-value" class="value">₹0.00</span>
+  </span>
+  <span class="delta-group">
+    <span class="label">Delta:</span> 
+    <span id="delta-value" class="value">0.00</span>
+  </span>
+</div>
+        </div>
+    </main>
+
+    <div class="option-chain-container card">
+        <h2 class="card-title" style="justify-content: center;"><i class="fa-solid fa-table-cells"></i> Option Chain</h2>
+        <div id="option-chain-table">
+            </div>
+    </div>
+
+    <script src="static/script.js"></script>
+
+</body>
+</html>
