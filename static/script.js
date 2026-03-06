@@ -1,7 +1,7 @@
 // Constants
 const POLLING_INTERVAL = 1000; // 1 second
 const CHART_UPDATE_INTERVAL = 1000; // 1 second
-const MAX_DATA_POINTS = 3600; // 60 minutes at 1 second interval
+const MAX_DATA_POINTS = 3600; // 60 hours at 1 minute interval
 const ANIMATION_DURATION = 350; // milliseconds
 
 let straddlePriceFromSocket = 0;
@@ -27,7 +27,7 @@ function renderRecommendation(legs, net_delta, strangle_credit, future_price, sk
     }
 
 
-    const orderedLegs = ['hedge_pe','short_pe', 'short_ce', 'hedge_ce'];
+    const orderedLegs = ['hedge_pe', 'short_pe', 'short_ce', 'hedge_ce'];
     orderedLegs.forEach(leg => {
         const data = legs[leg];
         if (!data) return;  // skip if data is missing
@@ -245,8 +245,18 @@ async function fetchPnl() {
             return;
         }
 
-        pnlData.pnlSeries.push([ts, netPnl]);
-        pnlData.straddleSeries.push([ts, straddlePrice]);
+        // Group points by minute for 1-minute historical data gap
+        const tsMinute = Math.floor(ts / 60000) * 60000;
+
+        if (pnlData.pnlSeries.length > 0 && pnlData.pnlSeries[pnlData.pnlSeries.length - 1][0] === tsMinute) {
+            // Update current minute's point
+            pnlData.pnlSeries[pnlData.pnlSeries.length - 1][1] = netPnl;
+            pnlData.straddleSeries[pnlData.straddleSeries.length - 1][1] = straddlePrice;
+        } else {
+            // New minute, add new point
+            pnlData.pnlSeries.push([tsMinute, netPnl]);
+            pnlData.straddleSeries.push([tsMinute, straddlePrice]);
+        }
 
         if (pnlData.pnlSeries.length > MAX_DATA_POINTS) {
             pnlData.pnlSeries = pnlData.pnlSeries.slice(-MAX_DATA_POINTS);
@@ -288,7 +298,7 @@ function updateChart() {
 
 function updatePnLDisplay(json, netPnl, straddlePrice) {
     const availableMargin = json.available_margin ?? 0;
-    document.getElementById("available-margin").textContent = 
+    document.getElementById("available-margin").textContent =
         `Margin: ₹${formatIndianNumber(availableMargin)}`;
 
     const margin = json.margin;
