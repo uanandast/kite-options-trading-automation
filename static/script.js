@@ -501,10 +501,39 @@ async function triggerManualExit() {
     }
 }
 
+async function triggerManualStoploss() {
+    const slButton = document.getElementById('manual-sl-btn');
+    if (!slButton) return;
+
+    if (slButton.disabled) return;
+    slButton.disabled = true;
+
+    try {
+        const response = await fetch('/manual_stoploss', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' }
+        });
+        const payload = await response.json();
+
+        if (!response.ok) {
+            throw new Error(payload.message || 'Failed to start manual stoploss');
+        }
+    } catch (error) {
+        console.error('Error triggering manual stoploss:', error);
+        alert(error.message || 'Error triggering manual stoploss');
+    } finally {
+        slButton.disabled = false;
+    }
+}
+
 document.addEventListener('DOMContentLoaded', () => {
     const exitButton = document.getElementById('manual-exit-btn');
     if (exitButton) {
         exitButton.addEventListener('click', triggerManualExit);
+    }
+    const slButton = document.getElementById('manual-sl-btn');
+    if (slButton) {
+        slButton.addEventListener('click', triggerManualStoploss);
     }
 });
 

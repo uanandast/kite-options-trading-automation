@@ -137,6 +137,21 @@
             cursor: not-allowed;
             transform: none;
         }
+        .btn-warning {
+            background-color: #b36a00;
+            border-color: #b36a00;
+            color: #fff;
+        }
+        .btn-warning:hover {
+            background-color: #d17b00;
+            border-color: #d17b00;
+            color: #fff;
+        }
+        .btn-warning:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
 
         /* Right Panel: Recommendations & P&L */
         #recommendation {
@@ -285,6 +300,7 @@
             <div id="pnl-chart"></div>
             <div class="chart-controls">
                 <button id="manual-exit-btn" class="btn btn-danger"><i class="fa-solid fa-circle-stop"></i> Exit Positions</button>
+                <button id="manual-sl-btn" class="btn btn-warning"><i class="fa-solid fa-shield-halved"></i> Place SL Orders</button>
             </div>
         </div>
 

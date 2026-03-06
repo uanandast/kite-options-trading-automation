@@ -16,6 +16,8 @@ app = Flask(__name__)
 latest_iron_condor_data = {}
 manual_exit_lock = Lock()
 manual_exit_in_progress = False
+manual_stoploss_lock = Lock()
+manual_stoploss_in_progress = False
 
 kite_monitor_final = None
 get_current_iron_condor = None
@@ -184,6 +186,21 @@ def _run_manual_exit():
             manual_exit_in_progress = False
 
 
+def _run_manual_stoploss():
+    global manual_stoploss_in_progress
+    if kite_monitor_final is None:
+        with manual_stoploss_lock:
+            manual_stoploss_in_progress = False
+        return
+    try:
+        kite_monitor_final.stoploss_order_button()
+    except Exception as e:
+        print(f"❌ Error in manual stoploss: {str(e)}")
+    finally:
+        with manual_stoploss_lock:
+            manual_stoploss_in_progress = False
+
+
 @app.route('/manual_exit', methods=['POST'])
 def manual_exit():
     global manual_exit_in_progress
@@ -194,6 +211,18 @@ def manual_exit():
 
     Thread(target=_run_manual_exit, daemon=True).start()
     return jsonify({"message": "Manual exit started"}), 202
+
+
+@app.route('/manual_stoploss', methods=['POST'])
+def manual_stoploss():
+    global manual_stoploss_in_progress
+    with manual_stoploss_lock:
+        if manual_stoploss_in_progress:
+            return jsonify({"message": "Manual stoploss is already in progress"}), 409
+        manual_stoploss_in_progress = True
+
+    Thread(target=_run_manual_stoploss, daemon=True).start()
+    return jsonify({"message": "Manual stoploss started"}), 202
 
 # Run the monitoring loop in the background
 if __name__ == '__main__':

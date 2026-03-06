@@ -149,76 +149,96 @@ def ask_and_sleep_mac():
 
 
 
-# def has_existing_stoploss(kite, symbol):
-#     """
-#     Checks if a SL or SL-L order already exists for this symbol.
-#     """
-#     try:
-#         orders = kite.orders()
-#         for order in orders:
-#             if (
-#                 order["tradingsymbol"] == symbol
-#                 and order["status"] in ["OPEN", "TRIGGER PENDING"]
-#                 and order["order_type"] == "SL"  # Covers both SL-M and SL-L
-#             ):
-#                 return order["order_id"]
-#     except Exception as e:
-#         print(f"❌ Error checking SL for {symbol}:", e)
-#     return False
+def has_existing_stoploss(kite, symbol):
+    """
+    Checks if a SL or SL-L order already exists for this symbol.
+    """
+    try:
+        orders = kite.orders()
+        for order in orders:
+            if (
+                order["tradingsymbol"] == symbol
+                and order["status"] in ["OPEN", "TRIGGER PENDING"]
+                and order["order_type"] == "SL"  # Covers both SL-M and SL-L
+            ):
+                return order["order_id"]
+    except Exception as e:
+        print(f"❌ Error checking SL for {symbol}:", e)
+    return False
 
 
 
 
-# def place_stoploss_order(position):
+def place_stoploss_order(position):
     
-#     # last_sell_price = get_last_sell_price(position["tradingsymbol"])    
-#     # print(f"💰 Last sell price for {position['tradingsymbol']}: {last_sell_price}")
+    # last_sell_price = get_last_sell_price(position["tradingsymbol"])    
+    # print(f"💰 Last sell price for {position['tradingsymbol']}: {last_sell_price}")
 
-#     stoploss_point = 9 # Adjust this value as needed
+    stoploss_point = 9 # Adjust this value as needed
 
-#     try:
-#         ltp_data = kite.ltp(f"{position['exchange']}:{position['tradingsymbol']}")
-#         ltp = ltp_data[f"{position['exchange']}:{position['tradingsymbol']}"]["last_price"]
-#         print(f"💰 LTP for {position['tradingsymbol']}: {ltp}")
-#         sl_trigger_price = round(ltp + ltp/2, 1)
-#     except Exception as e:
-#         print(f"❌ Failed to fetch LTP for {position['tradingsymbol']}: {e}")
-#         sl_trigger_price = round(position['average_price'] + stoploss_point, 1)
-#     # if last_sell_price is None:
-#     #     print(f"❌ Last sell price not found for {position['tradingsymbol']}, using average price")
-#     #     sl_trigger_price = round(position['average_price']+stoploss_point ,1)
-#     # else:    
-#     #     sl_trigger_price = round(last_sell_price + stoploss_point, 1)
+    try:
+        ltp_data = kite.ltp(f"{position['exchange']}:{position['tradingsymbol']}")
+        ltp = ltp_data[f"{position['exchange']}:{position['tradingsymbol']}"]["last_price"]
+        print(f"💰 LTP for {position['tradingsymbol']}: {ltp}")
+        sl_trigger_price = round(ltp + ltp/4, 1) # Placing SL at 25% above current LTP, adjust as needed
+    except Exception as e:
+        print(f"❌ Failed to fetch LTP for {position['tradingsymbol']}: {e}")
+        sl_trigger_price = round(position['average_price'] + stoploss_point, 1)
+    # if last_sell_price is None:
+    #     print(f"❌ Last sell price not found for {position['tradingsymbol']}, using average price")
+    #     sl_trigger_price = round(position['average_price']+stoploss_point ,1)
+    # else:    
+    #     sl_trigger_price = round(last_sell_price + stoploss_point, 1)
 
 
-#     total_qty = abs(position["quantity"])
+    total_qty = abs(position["quantity"])
 
-#     freeze_limit = 1800
+    freeze_limit = 1755
 
-#     try:
-#         order_ids = []
+    try:
+        order_ids = []
 
-#         for i in range(0, total_qty, freeze_limit):
-#             chunk_qty = min(freeze_limit, total_qty - i)
+        for i in range(0, total_qty, freeze_limit):
+            chunk_qty = min(freeze_limit, total_qty - i)
 
-#             order_id = kite.place_order(
-#                 exchange=position["exchange"],
-#                 tradingsymbol=position["tradingsymbol"],
-#                 transaction_type="BUY",  # Covering short
-#                 quantity=chunk_qty,
-#                 order_type="SL",
-#                 price=sl_trigger_price,
-#                 trigger_price=sl_trigger_price - 0.5,
-#                 product=position["product"],
-#                 variety="regular"
-#             )
-#             print(f"✅ SL order placed: Qty={chunk_qty}, Trigger={sl_trigger_price}, Order ID={order_id}")
-#             order_ids.append(order_id)
-#             beep()
-#         return order_ids 
-#     except Exception as e:
-#         print(f"❌ Failed to place SL for {position['tradingsymbol']}: {e}")
-#         return None
+            order_id = kite.place_order(
+                exchange=position["exchange"],
+                tradingsymbol=position["tradingsymbol"],
+                transaction_type="BUY",  # Covering short
+                quantity=chunk_qty,
+                order_type="SL",
+                price=sl_trigger_price,
+                trigger_price=sl_trigger_price - 0.5,
+                product=position["product"],
+                variety="regular"
+            )
+            print(f"✅ SL order placed: Qty={chunk_qty}, Trigger={sl_trigger_price}, Order ID={order_id}")
+            order_ids.append(order_id)
+            beep()
+        return order_ids 
+    except Exception as e:
+        print(f"❌ Failed to place SL for {position['tradingsymbol']}: {e}")
+        return None
+
+def stoploss_order_button():
+    try:
+        # This function can be called from the UI when the user clicks a button to place SL orders manually
+        positions = kite.positions()["net"]
+        option_positions = [p for p in positions if p["quantity"] != 0 and p["tradingsymbol"].endswith(("CE", "PE")) and p['exchange'] in ('BFO','NFO')]
+        for pos in option_positions:
+            symbol = pos["tradingsymbol"]
+            existing_order_id = has_existing_stoploss(kite, symbol)
+            if existing_order_id:
+                print(f"⏳ SL already exists for {symbol}, skipping...")
+            else:
+                print(f"📌 Placing SL for {symbol} from button click")
+                place_stoploss_order(pos)
+    except Exception as e:
+        print(f"❌ Error in stoploss_order_button: {e}")
+
+
+
+
 
 def exit_position(pos, side):
     try:
