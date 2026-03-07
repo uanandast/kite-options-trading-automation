@@ -154,13 +154,18 @@ def cancel_all_sl_orders(fast=False):
             o for o in orders
             if o["status"] in ["OPEN", "TRIGGER PENDING"] and o["order_type"] == "SL"
         ]
+        cancelled = 0
+        errors = 0
 
         def _cancel(o):
+            nonlocal cancelled, errors
             try:
                 kite.cancel_order(order_id=o["order_id"], variety="regular")
+                cancelled += 1
                 if not fast:
                     print(f"❌ Cancelled SL order {o['order_id']} for {o['tradingsymbol']}")
             except Exception as e:
+                errors += 1
                 print(f"⚠️ Error cancelling SL order {o['order_id']} for {o['tradingsymbol']}: {e}")
 
         if fast and len(sl_orders) > 1:
@@ -173,8 +178,19 @@ def cancel_all_sl_orders(fast=False):
         else:
             for o in sl_orders:
                 _cancel(o)
+        return {
+            "requested": len(sl_orders),
+            "cancelled": cancelled,
+            "errors": errors,
+        }
     except Exception as e:
         print(f"⚠️ Error fetching orders for cancellation: {e}")
+        return {
+            "requested": 0,
+            "cancelled": 0,
+            "errors": 1,
+            "error": str(e),
+        }
 
 
 
@@ -274,16 +290,38 @@ def stoploss_order_button():
         # This function can be called from the UI when the user clicks a button to place SL orders manually
         positions = kite.positions()["net"]
         option_positions = [p for p in positions if p["quantity"] != 0 and p["tradingsymbol"].endswith(("CE", "PE")) and p['exchange'] in ('BFO','NFO')]
+        total_positions = len(option_positions)
+        skipped_existing = 0
+        placed_orders = 0
+        failed_positions = 0
         for pos in option_positions:
             symbol = pos["tradingsymbol"]
             existing_order_id = has_existing_stoploss(kite, symbol)
             if existing_order_id:
                 print(f"⏳ SL already exists for {symbol}, skipping...")
+                skipped_existing += 1
             else:
                 print(f"📌 Placing SL for {symbol} from button click")
-                place_stoploss_order(pos)
+                order_ids = place_stoploss_order(pos)
+                if order_ids:
+                    placed_orders += len(order_ids)
+                else:
+                    failed_positions += 1
+        return {
+            "positions": total_positions,
+            "skipped": skipped_existing,
+            "placed_orders": placed_orders,
+            "failed_positions": failed_positions,
+        }
     except Exception as e:
         print(f"❌ Error in stoploss_order_button: {e}")
+        return {
+            "positions": 0,
+            "skipped": 0,
+            "placed_orders": 0,
+            "failed_positions": 1,
+            "error": str(e),
+        }
 
 
 
@@ -312,8 +350,10 @@ def exit_position(pos, side):
             )
             elapsed = time.time() - start_ts
             print(f"✅ Exit order placed: {order_id} ({elapsed:.2f}s)")
+        return True
     except Exception as e:
         print(f"❌ Error while exiting hedge {pos['tradingsymbol']}: {e}")
+        return False
 
 
 
@@ -393,13 +433,21 @@ def Exiting_position(positions):
         short_legs = [p for p in short_legs if p['quantity'] != 0]
         long_legs = [p for p in long_legs if p['quantity'] != 0]
 
+        total_short = len(short_legs)
+        total_long = len(long_legs)
+        succeeded = 0
+        failed = 0
+
         if short_legs:
             max_workers = min(4, len(short_legs))
             print(f"⚡ Exiting short legs first: {len(short_legs)} legs (workers={max_workers})")
             with ThreadPoolExecutor(max_workers=max_workers) as executor:
                 futures = [executor.submit(exit_position, pos, "BUY") for pos in short_legs]
                 for future in as_completed(futures):
-                    future.result()
+                    if future.result():
+                        succeeded += 1
+                    else:
+                        failed += 1
 
         if long_legs:
             max_workers = min(4, len(long_legs))
@@ -407,9 +455,27 @@ def Exiting_position(positions):
             with ThreadPoolExecutor(max_workers=max_workers) as executor:
                 futures = [executor.submit(exit_position, pos, "SELL") for pos in long_legs]
                 for future in as_completed(futures):
-                    future.result()
+                    if future.result():
+                        succeeded += 1
+                    else:
+                        failed += 1
+        return {
+            "short_legs": total_short,
+            "long_legs": total_long,
+            "attempted": total_short + total_long,
+            "succeeded": succeeded,
+            "failed": failed,
+        }
     except Exception as e:
         print(f"❌ Error in P&L monitoring: {e}")
+        return {
+            "short_legs": 0,
+            "long_legs": 0,
+            "attempted": 0,
+            "succeeded": 0,
+            "failed": 1,
+            "error": str(e),
+        }
 
 
 

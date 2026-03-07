@@ -476,6 +476,33 @@ function formatIndianNumber(x) {
     return formatted + '.' + parts[1];
 }
 
+function showToast(title, message, type = 'success', durationMs = 2500) {
+    const container = document.getElementById('toast-container');
+    if (!container) return;
+
+    const toast = document.createElement('div');
+    toast.className = `toast ${type === 'error' ? 'error' : ''}`;
+    toast.innerHTML = `
+        <div class="toast-bar"></div>
+        <div>
+            <div class="toast-title">${title}</div>
+            <div class="toast-message">${message}</div>
+        </div>
+        <button class="toast-close" aria-label="Dismiss">×</button>
+    `;
+
+    container.appendChild(toast);
+    const closeBtn = toast.querySelector('.toast-close');
+    closeBtn.addEventListener('click', () => toast.remove());
+
+    requestAnimationFrame(() => toast.classList.add('show'));
+
+    setTimeout(() => {
+        toast.classList.remove('show');
+        setTimeout(() => toast.remove(), 200);
+    }, durationMs);
+}
+
 async function triggerManualExit() {
     const exitButton = document.getElementById('manual-exit-btn');
     if (!exitButton) return;
@@ -493,9 +520,10 @@ async function triggerManualExit() {
         if (!response.ok) {
             throw new Error(payload.message || 'Failed to start manual exit');
         }
+        showToast('Complete', payload.message || 'Manual exit started');
     } catch (error) {
         console.error('Error triggering manual exit:', error);
-        alert(error.message || 'Error triggering manual exit');
+        showToast('Error', error.message || 'Error triggering manual exit', 'error', 3000);
     } finally {
         exitButton.disabled = false;
     }
@@ -518,9 +546,10 @@ async function triggerManualStoploss() {
         if (!response.ok) {
             throw new Error(payload.message || 'Failed to start manual stoploss');
         }
+        showToast('Complete', payload.message || 'Manual stoploss started');
     } catch (error) {
         console.error('Error triggering manual stoploss:', error);
-        alert(error.message || 'Error triggering manual stoploss');
+        showToast('Error', error.message || 'Error triggering manual stoploss', 'error', 3000);
     } finally {
         slButton.disabled = false;
     }
@@ -543,9 +572,10 @@ async function triggerManualCancelSL() {
         if (!response.ok) {
             throw new Error(payload.message || 'Failed to cancel SL orders');
         }
+        showToast('Complete', payload.message || 'Manual SL cancel started');
     } catch (error) {
         console.error('Error cancelling SL orders:', error);
-        alert(error.message || 'Error cancelling SL orders');
+        showToast('Error', error.message || 'Error cancelling SL orders', 'error', 3000);
     } finally {
         cancelButton.disabled = false;
     }

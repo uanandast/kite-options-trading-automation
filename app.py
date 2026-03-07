@@ -172,50 +172,33 @@ def pnl():
         return jsonify({"error": str(e)}), 500
 
 
-def _run_manual_exit():
-    global manual_exit_in_progress
-    if kite_monitor_final is None:
-        with manual_exit_lock:
-            manual_exit_in_progress = False
-        return
-    try:
-        positions = kite_monitor_final.kite.positions()["net"]
-        kite_monitor_final.Exiting_position(positions)
-    except Exception as e:
-        print(f"❌ Error in manual exit: {str(e)}")
-    finally:
-        with manual_exit_lock:
-            manual_exit_in_progress = False
+def _format_cancel_sl_message(result):
+    if result.get("requested", 0) == 0:
+        return "No open SL orders to cancel"
+    msg = f"Cancelled {result.get('cancelled', 0)} SL orders"
+    if result.get("errors", 0) > 0:
+        msg += f" ({result.get('errors', 0)} errors)"
+    return msg
 
 
-def _run_manual_stoploss():
-    global manual_stoploss_in_progress
-    if kite_monitor_final is None:
-        with manual_stoploss_lock:
-            manual_stoploss_in_progress = False
-        return
-    try:
-        kite_monitor_final.stoploss_order_button()
-    except Exception as e:
-        print(f"❌ Error in manual stoploss: {str(e)}")
-    finally:
-        with manual_stoploss_lock:
-            manual_stoploss_in_progress = False
+def _format_stoploss_message(result):
+    if result.get("positions", 0) == 0:
+        return "No option positions found for SL"
+    msg = f"Placed {result.get('placed_orders', 0)} SL orders"
+    if result.get("skipped", 0) > 0:
+        msg += f", skipped {result.get('skipped', 0)} existing"
+    if result.get("failed_positions", 0) > 0:
+        msg += f" ({result.get('failed_positions', 0)} failed)"
+    return msg
 
 
-def _run_manual_cancel_sl():
-    global manual_cancel_sl_in_progress
-    if kite_monitor_final is None:
-        with manual_cancel_sl_lock:
-            manual_cancel_sl_in_progress = False
-        return
-    try:
-        kite_monitor_final.cancel_all_sl_orders()
-    except Exception as e:
-        print(f"❌ Error in manual SL cancel: {str(e)}")
-    finally:
-        with manual_cancel_sl_lock:
-            manual_cancel_sl_in_progress = False
+def _format_exit_message(result):
+    if result.get("attempted", 0) == 0:
+        return "No open positions to exit"
+    msg = f"Exited {result.get('succeeded', 0)} legs"
+    if result.get("failed", 0) > 0:
+        msg += f" ({result.get('failed', 0)} failed)"
+    return msg
 
 
 @app.route('/manual_exit', methods=['POST'])
@@ -226,8 +209,18 @@ def manual_exit():
             return jsonify({"message": "Manual exit is already in progress"}), 409
         manual_exit_in_progress = True
 
-    Thread(target=_run_manual_exit, daemon=True).start()
-    return jsonify({"message": "Manual exit started"}), 202
+    try:
+        if kite_monitor_final is None:
+            return jsonify({"message": "Kite runtime not initialized"}), 503
+        positions = kite_monitor_final.kite.positions()["net"]
+        result = kite_monitor_final.Exiting_position(positions)
+        return jsonify({"message": _format_exit_message(result), "details": result}), 200
+    except Exception as e:
+        print(f"❌ Error in manual exit: {str(e)}")
+        return jsonify({"message": f"Manual exit failed: {str(e)}"}), 500
+    finally:
+        with manual_exit_lock:
+            manual_exit_in_progress = False
 
 
 @app.route('/manual_stoploss', methods=['POST'])
@@ -238,8 +231,17 @@ def manual_stoploss():
             return jsonify({"message": "Manual stoploss is already in progress"}), 409
         manual_stoploss_in_progress = True
 
-    Thread(target=_run_manual_stoploss, daemon=True).start()
-    return jsonify({"message": "Manual stoploss started"}), 202
+    try:
+        if kite_monitor_final is None:
+            return jsonify({"message": "Kite runtime not initialized"}), 503
+        result = kite_monitor_final.stoploss_order_button()
+        return jsonify({"message": _format_stoploss_message(result), "details": result}), 200
+    except Exception as e:
+        print(f"❌ Error in manual stoploss: {str(e)}")
+        return jsonify({"message": f"Manual stoploss failed: {str(e)}"}), 500
+    finally:
+        with manual_stoploss_lock:
+            manual_stoploss_in_progress = False
 
 
 @app.route('/manual_cancel_sl', methods=['POST'])
@@ -250,8 +252,17 @@ def manual_cancel_sl():
             return jsonify({"message": "Manual SL cancel is already in progress"}), 409
         manual_cancel_sl_in_progress = True
 
-    Thread(target=_run_manual_cancel_sl, daemon=True).start()
-    return jsonify({"message": "Manual SL cancel started"}), 202
+    try:
+        if kite_monitor_final is None:
+            return jsonify({"message": "Kite runtime not initialized"}), 503
+        result = kite_monitor_final.cancel_all_sl_orders()
+        return jsonify({"message": _format_cancel_sl_message(result), "details": result}), 200
+    except Exception as e:
+        print(f"❌ Error in manual SL cancel: {str(e)}")
+        return jsonify({"message": f"Manual SL cancel failed: {str(e)}"}), 500
+    finally:
+        with manual_cancel_sl_lock:
+            manual_cancel_sl_in_progress = False
 
 # Run the monitoring loop in the background
 if __name__ == '__main__':
