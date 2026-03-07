@@ -526,6 +526,31 @@ async function triggerManualStoploss() {
     }
 }
 
+async function triggerManualCancelSL() {
+    const cancelButton = document.getElementById('cancel-sl-btn');
+    if (!cancelButton) return;
+
+    if (cancelButton.disabled) return;
+    cancelButton.disabled = true;
+
+    try {
+        const response = await fetch('/manual_cancel_sl', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' }
+        });
+        const payload = await response.json();
+
+        if (!response.ok) {
+            throw new Error(payload.message || 'Failed to cancel SL orders');
+        }
+    } catch (error) {
+        console.error('Error cancelling SL orders:', error);
+        alert(error.message || 'Error cancelling SL orders');
+    } finally {
+        cancelButton.disabled = false;
+    }
+}
+
 document.addEventListener('DOMContentLoaded', () => {
     const exitButton = document.getElementById('manual-exit-btn');
     if (exitButton) {
@@ -534,6 +559,10 @@ document.addEventListener('DOMContentLoaded', () => {
     const slButton = document.getElementById('manual-sl-btn');
     if (slButton) {
         slButton.addEventListener('click', triggerManualStoploss);
+    }
+    const cancelSlButton = document.getElementById('cancel-sl-btn');
+    if (cancelSlButton) {
+        cancelSlButton.addEventListener('click', triggerManualCancelSL);
     }
 });
 
