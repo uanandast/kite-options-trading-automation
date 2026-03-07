@@ -147,6 +147,36 @@ def ask_and_sleep_mac():
 #     return None
 
 
+def cancel_all_sl_orders(fast=False):
+    try:
+        orders = kite.orders()
+        sl_orders = [
+            o for o in orders
+            if o["status"] in ["OPEN", "TRIGGER PENDING"] and o["order_type"] == "SL"
+        ]
+
+        def _cancel(o):
+            try:
+                kite.cancel_order(order_id=o["order_id"], variety="regular")
+                if not fast:
+                    print(f"❌ Cancelled SL order {o['order_id']} for {o['tradingsymbol']}")
+            except Exception as e:
+                print(f"⚠️ Error cancelling SL order {o['order_id']} for {o['tradingsymbol']}: {e}")
+
+        if fast and len(sl_orders) > 1:
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+            max_workers = min(4, len(sl_orders))
+            with ThreadPoolExecutor(max_workers=max_workers) as ex:
+                futures = [ex.submit(_cancel, o) for o in sl_orders]
+                for f in as_completed(futures):
+                    f.result()
+        else:
+            for o in sl_orders:
+                _cancel(o)
+    except Exception as e:
+        print(f"⚠️ Error fetching orders for cancellation: {e}")
+
+
 
 
 def has_existing_stoploss(kite, symbol):
@@ -169,21 +199,26 @@ def has_existing_stoploss(kite, symbol):
 
 
 
-def place_stoploss_order(position):
+def place_stoploss_order(position, *, ltp=None, sl_trigger_price=None, fast=False):
     
     # last_sell_price = get_last_sell_price(position["tradingsymbol"])    
     # print(f"💰 Last sell price for {position['tradingsymbol']}: {last_sell_price}")
 
     stoploss_point = 9 # Adjust this value as needed
 
-    try:
-        ltp_data = kite.ltp(f"{position['exchange']}:{position['tradingsymbol']}")
-        ltp = ltp_data[f"{position['exchange']}:{position['tradingsymbol']}"]["last_price"]
-        print(f"💰 LTP for {position['tradingsymbol']}: {ltp}")
-        sl_trigger_price = round(ltp + ltp/4, 1) # Placing SL at 25% above current LTP, adjust as needed
-    except Exception as e:
-        print(f"❌ Failed to fetch LTP for {position['tradingsymbol']}: {e}")
-        sl_trigger_price = round(position['average_price'] + stoploss_point, 1)
+    if sl_trigger_price is None:
+        if ltp is None and not fast:
+            try:
+                ltp_data = kite.ltp(f"{position['exchange']}:{position['tradingsymbol']}")
+                ltp = ltp_data[f"{position['exchange']}:{position['tradingsymbol']}"]["last_price"]
+                print(f"💰 LTP for {position['tradingsymbol']}: {ltp}")
+            except Exception as e:
+                print(f"❌ Failed to fetch LTP for {position['tradingsymbol']}: {e}")
+                ltp = None
+        if ltp is not None:
+            sl_trigger_price = round(ltp + ltp / 4, 1)  # Placing SL at 25% above current LTP
+        else:
+            sl_trigger_price = round(position['average_price'] + stoploss_point, 1)
     # if last_sell_price is None:
     #     print(f"❌ Last sell price not found for {position['tradingsymbol']}, using average price")
     #     sl_trigger_price = round(position['average_price']+stoploss_point ,1)
@@ -197,10 +232,11 @@ def place_stoploss_order(position):
 
     try:
         order_ids = []
-
+        chunks = []
         for i in range(0, total_qty, freeze_limit):
-            chunk_qty = min(freeze_limit, total_qty - i)
+            chunks.append(min(freeze_limit, total_qty - i))
 
+        def _place_chunk(chunk_qty):
             order_id = kite.place_order(
                 exchange=position["exchange"],
                 tradingsymbol=position["tradingsymbol"],
@@ -212,10 +248,23 @@ def place_stoploss_order(position):
                 product=position["product"],
                 variety="regular"
             )
-            print(f"✅ SL order placed: Qty={chunk_qty}, Trigger={sl_trigger_price}, Order ID={order_id}")
-            order_ids.append(order_id)
-            beep()
-        return order_ids 
+            if not fast:
+                print(f"✅ SL order placed: Qty={chunk_qty}, Trigger={sl_trigger_price}, Order ID={order_id}")
+                beep()
+            return order_id
+
+        if fast and len(chunks) > 1:
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+            max_workers = min(3, len(chunks))
+            with ThreadPoolExecutor(max_workers=max_workers) as ex:
+                futures = [ex.submit(_place_chunk, qty) for qty in chunks]
+                for f in as_completed(futures):
+                    order_ids.append(f.result())
+        else:
+            for qty in chunks:
+                order_ids.append(_place_chunk(qty))
+
+        return order_ids
     except Exception as e:
         print(f"❌ Failed to place SL for {position['tradingsymbol']}: {e}")
         return None
