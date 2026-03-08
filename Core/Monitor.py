@@ -289,7 +289,7 @@ def stoploss_order_button():
     try:
         # This function can be called from the UI when the user clicks a button to place SL orders manually
         positions = kite.positions()["net"]
-        option_positions = [p for p in positions if p["quantity"] != 0 and p["tradingsymbol"].endswith(("CE", "PE")) and p['exchange'] in ('BFO','NFO')]
+        option_positions = [p for p in positions if p["quantity"] < 0 and p["tradingsymbol"].endswith(("CE", "PE")) and p['exchange'] in ('BFO','NFO')]
         total_positions = len(option_positions)
         skipped_existing = 0
         placed_orders = 0
