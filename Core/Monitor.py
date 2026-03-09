@@ -195,12 +195,12 @@ def cancel_all_sl_orders(fast=False):
 
 
 
-def has_existing_stoploss(kite, symbol):
+def has_existing_stoploss(kite, symbol, orders_cache=None):
     """
     Checks if a SL or SL-L order already exists for this symbol.
     """
     try:
-        orders = kite.orders()
+        orders = orders_cache if orders_cache is not None else kite.orders()
         for order in orders:
             if (
                 order["tradingsymbol"] == symbol
@@ -294,16 +294,70 @@ def stoploss_order_button():
         skipped_existing = 0
         placed_orders = 0
         failed_positions = 0
-        for pos in option_positions:
+
+        # Fetch orders once to avoid per-symbol API calls
+        try:
+            orders_cache = kite.orders()
+        except Exception as e:
+            print(f"⚠️ Error fetching orders (falling back to per-symbol checks): {e}")
+            orders_cache = None
+
+        existing_sl_symbols = set()
+        if orders_cache is not None:
+            for o in orders_cache:
+                if (
+                    o.get("status") in ["OPEN", "TRIGGER PENDING"]
+                    and o.get("order_type") == "SL"
+                    and o.get("tradingsymbol")
+                ):
+                    existing_sl_symbols.add(o["tradingsymbol"])
+
+        # Prefetch LTPs in one call to avoid per-symbol latency
+        ltp_map = {}
+        try:
+            ltp_symbols = [f"{p['exchange']}:{p['tradingsymbol']}" for p in option_positions]
+            if ltp_symbols:
+                ltp_data = kite.ltp(ltp_symbols)
+                for k, v in ltp_data.items():
+                    ltp_map[k] = v.get("last_price")
+        except Exception as e:
+            print(f"⚠️ Error prefetching LTPs (will use avg price): {e}")
+
+        def _place_for_position(pos):
             symbol = pos["tradingsymbol"]
-            existing_order_id = has_existing_stoploss(kite, symbol)
-            if existing_order_id:
-                print(f"⏳ SL already exists for {symbol}, skipping...")
-                skipped_existing += 1
-            else:
-                print(f"📌 Placing SL for {symbol} from button click")
-                order_ids = place_stoploss_order(pos)
-                if order_ids:
+            if symbol in existing_sl_symbols:
+                return ("skipped", symbol, None)
+            if orders_cache is not None:
+                existing_order_id = has_existing_stoploss(kite, symbol, orders_cache=orders_cache)
+                if existing_order_id:
+                    return ("skipped", symbol, None)
+            print(f"📌 Placing SL for {symbol} from button click")
+            ltp_key = f"{pos['exchange']}:{symbol}"
+            ltp = ltp_map.get(ltp_key)
+            order_ids = place_stoploss_order(pos, ltp=ltp, fast=True)
+            return ("placed" if order_ids else "failed", symbol, order_ids)
+
+        # Place SL orders with limited concurrency to reduce total latency
+        max_workers = min(2, total_positions) if total_positions > 0 else 1
+        if total_positions > 1:
+            with ThreadPoolExecutor(max_workers=max_workers) as ex:
+                futures = [ex.submit(_place_for_position, pos) for pos in option_positions]
+                for f in as_completed(futures):
+                    status, symbol, order_ids = f.result()
+                    if status == "skipped":
+                        print(f"⏳ SL already exists for {symbol}, skipping...")
+                        skipped_existing += 1
+                    elif status == "placed":
+                        placed_orders += len(order_ids)
+                    else:
+                        failed_positions += 1
+        else:
+            for pos in option_positions:
+                status, symbol, order_ids = _place_for_position(pos)
+                if status == "skipped":
+                    print(f"⏳ SL already exists for {symbol}, skipping...")
+                    skipped_existing += 1
+                elif status == "placed":
                     placed_orders += len(order_ids)
                 else:
                     failed_positions += 1
