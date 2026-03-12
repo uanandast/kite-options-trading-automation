@@ -24,7 +24,7 @@ kite.set_access_token(access_token)
 
 #spot for nifty - 256265 and sensex - 265 and banknifty - 260105
 # === Spot and option instrument tokens ===
-spot_token = 256265
+spot_token = 265
 
 # Fetch all NFO instruments
 if spot_token == 256265 or spot_token == 260105:

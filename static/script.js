@@ -290,10 +290,64 @@ function updateChart() {
                     data: pnlData.straddleSeries
                 }
             ], false);
+            pnlChart.updateOptions({
+                annotations: { points: buildLatestAnnotations() }
+            }, false, false);
         }
         lastChartUpdate = now;
     }
     pendingChartUpdate = false;
+}
+
+function buildLatestAnnotations() {
+    const points = [];
+
+    const lastStraddle = pnlData.straddleSeries[pnlData.straddleSeries.length - 1];
+    if (lastStraddle) {
+        points.push({
+            x: lastStraddle[0],
+            y: lastStraddle[1],
+            seriesIndex: 1,
+            yAxisIndex: 0,
+            marker: { size: 0 },
+            label: {
+                borderColor: '#21c55d',
+                style: {
+                    background: '#21c55d',
+                    color: '#0b1220',
+                    fontSize: '12px',
+                    fontWeight: 600,
+                    padding: { left: 8, right: 8, top: 4, bottom: 4 }
+                },
+                text: formatIndianNumber(lastStraddle[1])
+            }
+        });
+    }
+
+    const lastPnl = pnlData.pnlSeries[pnlData.pnlSeries.length - 1];
+    if (lastPnl) {
+        const pnlColor = lastPnl[1] >= 0 ? '#1f8bff' : '#ff5b5b';
+        points.push({
+            x: lastPnl[0],
+            y: lastPnl[1],
+            seriesIndex: 0,
+            yAxisIndex: 1,
+            marker: { size: 0 },
+            label: {
+                borderColor: pnlColor,
+                style: {
+                    background: pnlColor,
+                    color: '#0b1220',
+                    fontSize: '12px',
+                    fontWeight: 600,
+                    padding: { left: 8, right: 8, top: 4, bottom: 4 }
+                },
+                text: formatIndianNumber(lastPnl[1])
+            }
+        });
+    }
+
+    return points;
 }
 
 function updatePnLDisplay(json, netPnl, straddlePrice) {
@@ -420,6 +474,9 @@ function renderPnlChart() {
             shared: true,
             x: { format: 'HH:mm:ss' }
         },
+        annotations: {
+            points: buildLatestAnnotations()
+        },
         legend: {
             position: 'top',
             horizontalAlign: 'center',
@@ -443,6 +500,9 @@ function clearChartData() {
         { name: 'Net P&L', data: [] },
         { name: 'Straddle Price', data: [] }
     ]);
+    pnlChart.updateOptions({
+        annotations: { points: [] }
+    }, false, false);
     console.log("Chart data cleared.");
 }
 
