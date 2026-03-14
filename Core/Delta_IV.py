@@ -22,66 +22,107 @@ with open("Cred/access_token.txt", "r") as f:
 kite = KiteConnect(api_key=api_key)
 kite.set_access_token(access_token)
 
-#spot for nifty - 256265 and sensex - 265 and banknifty - 260105
-# === Spot and option instrument tokens ===
-spot_token = 256265
+# spot for nifty - 256265 and sensex - 265 and banknifty - 260105
+INDEX_CONFIG = {
+    "nifty": {
+        "label": "NIFTY",
+        "spot_token": 256265,
+        "exchange": "NFO",
+        "option_symbol": "NIFTY",
+        "strike_step": 50,
+    },
+    "sensex": {
+        "label": "SENSEX",
+        "spot_token": 265,
+        "exchange": "BFO",
+        "option_symbol": "SENSEX",
+        "strike_step": 100,
+    },
+    "banknifty": {
+        "label": "BANKNIFTY",
+        "spot_token": 260105,
+        "exchange": "NFO",
+        "option_symbol": "BANKNIFTY",
+        "strike_step": 100,
+    },
+}
 
-# Fetch all NFO instruments
-if spot_token == 256265 or spot_token == 260105:
-    nfo_instruments = kite.instruments('NFO')
-elif spot_token == 265:
-    nfo_instruments = kite.instruments('BFO')   
-    print("Sensex")
-else:
-    raise ValueError("Invalid spot token. Use 256265 for Nifty or 256262 for Sensex.")
-
-# Filter for NIFTY options (CE/PE)
-if spot_token == 256265:
-    nifty_options = [
-        inst for inst in nfo_instruments
-        if 'NIFTY' in inst['tradingsymbol'] and inst['instrument_type'] in ('CE', 'PE')
-    ]
-elif spot_token == 265:
-    nifty_options = [
-        inst for inst in nfo_instruments
-        if 'SENSEX' in inst['tradingsymbol'] and inst['instrument_type'] in ('CE', 'PE')
-    ]
-elif spot_token == 260105:
-    nifty_options = [
-        inst for inst in nfo_instruments
-        if 'BANKNIFTY' in inst['tradingsymbol'] and inst['instrument_type'] in ('CE', 'PE')
-    ]
-else:
-    raise ValueError("Invalid spot token. Use 256265 for Nifty or 256262 for Sensex.")
-
-
-
-# Get all unique expiry dates and select the nearest one
-expiry_dates = {inst['expiry'] for inst in nifty_options}
-nearest_expiry = min(expiry_dates)
-
-# Filter options for the nearest expiry only
-nearest_expiry_options = [
-    inst for inst in nifty_options
-    if inst['expiry'] == nearest_expiry
-]
-
-# Extract strike prices
-strike_prices = sorted({inst['strike'] for inst in nearest_expiry_options})
-
-# If you want to see tradingsymbol, strike, and option type:
-option_chain = {
-    inst['instrument_token'] : {
-        'tradingsymbol': inst['tradingsymbol'],
-        'strike': inst['strike'],
-        'type': inst['instrument_type'],
-        'expiry':inst['expiry']
-    }
-    for inst in nearest_expiry_options}
-
-option_tokens = option_chain
+selected_index_key = "nifty"
+spot_token = INDEX_CONFIG[selected_index_key]["spot_token"]
+strike_step = INDEX_CONFIG[selected_index_key]["strike_step"]
+strike_prices = []
+option_tokens = {}
+subscribed_tokens = []
 
 stradle_price =0
+
+
+def _configure_index_data(index_key):
+    global selected_index_key, spot_token, strike_step, option_tokens, strike_prices, live_data
+
+    normalized_index_key = (index_key or "").strip().lower()
+    if normalized_index_key not in INDEX_CONFIG:
+        raise ValueError("Invalid index. Supported values: nifty, sensex, banknifty")
+
+    cfg = INDEX_CONFIG[normalized_index_key]
+    instruments = kite.instruments(cfg["exchange"])
+    filtered_options = [
+        inst for inst in instruments
+        if cfg["option_symbol"] in inst["tradingsymbol"] and inst["instrument_type"] in ("CE", "PE")
+    ]
+    if not filtered_options:
+        raise RuntimeError(f"No options found for {cfg['label']}")
+
+    expiry_dates = {inst["expiry"] for inst in filtered_options}
+    nearest_expiry = min(expiry_dates)
+    nearest_expiry_options = [
+        inst for inst in filtered_options
+        if inst["expiry"] == nearest_expiry
+    ]
+
+    strike_prices = sorted({inst["strike"] for inst in nearest_expiry_options})
+    option_tokens = {
+        inst["instrument_token"]: {
+            "tradingsymbol": inst["tradingsymbol"],
+            "strike": inst["strike"],
+            "type": inst["instrument_type"],
+            "expiry": inst["expiry"],
+        }
+        for inst in nearest_expiry_options
+    }
+
+    selected_index_key = normalized_index_key
+    spot_token = cfg["spot_token"]
+    strike_step = cfg["strike_step"]
+    live_data = {}
+
+
+def _resubscribe_for_current_index():
+    global subscribed_tokens
+    new_tokens = [spot_token] + list(option_tokens.keys())
+    try:
+        if subscribed_tokens:
+            kws.unsubscribe(subscribed_tokens)
+        kws.subscribe(new_tokens)
+        kws.set_mode(kws.MODE_LTP, new_tokens)
+        subscribed_tokens = new_tokens
+    except Exception as e:
+        print(f"⚠️ Unable to resubscribe websocket tokens: {e}")
+
+
+def set_selected_index(index_key):
+    _configure_index_data(index_key)
+    _resubscribe_for_current_index()
+    return get_selected_index()
+
+
+def get_selected_index():
+    return selected_index_key
+
+
+def get_available_indices():
+    return list(INDEX_CONFIG.keys())
+
 
 def get_previous_day_close():
     prev = kite.quote(spot_token)
@@ -339,19 +380,7 @@ def select_iron_condor_from_data(
     return best_condor, net_delta
 
 def min_strike_selection(spot):
-    
-    nifty_diff = 50
-    bank_nifty_diff = 100
-    sensex_diff = 100
-    if spot_token == 256265:
-        near_strikes = round(spot / nifty_diff) * nifty_diff
-    elif spot_token == 260105:
-        near_strikes = round(spot / bank_nifty_diff) * bank_nifty_diff
-    elif spot_token == 265:
-        near_strikes = round(spot / sensex_diff) * sensex_diff
-    else:
-        near_strikes = round(spot / nifty_diff) * nifty_diff
-    return near_strikes
+    return round(spot / strike_step) * strike_step
 
 
 
@@ -374,7 +403,12 @@ def get_current_iron_condor():
     atm_strike = min_strike_selection(spot_price)
     
 
-    atm_index = strike_prices.index(atm_strike)
+    if not strike_prices:
+        return {}, None, [], None, None, None, None, spot_price
+    try:
+        atm_index = strike_prices.index(atm_strike)
+    except ValueError:
+        atm_index = min(range(len(strike_prices)), key=lambda i: abs(strike_prices[i] - atm_strike))
 
     # positions = kite.positions()['net']
     # option_positions = [pos for pos in positions if pos['tradingsymbol'].strip().upper().endswith(("CE", "PE")) and pos['exchange'] in ('BFO','NFO')]
@@ -399,7 +433,7 @@ def get_current_iron_condor():
     ce_fut_atm_ltp = live_data.get(ce_fut_atm_ltp)
     pe_fut_atm_ltp = live_data.get(pe_fut_atm_ltp)
     if ce_fut_atm_ltp is None or pe_fut_atm_ltp is None:
-        return {}, None, [], None, future_price, Skew, None, spot_price
+        return {}, None, [], None, future_price, None, None, spot_price
 
 
     Skew = pe_fut_atm_ltp - ce_fut_atm_ltp if ce_fut_atm_ltp and pe_fut_atm_ltp else None
@@ -462,9 +496,11 @@ def get_current_iron_condor():
 
 
 def on_connect(ws, response):
+    global subscribed_tokens
     tokens = [spot_token] + list(option_tokens.keys())
     ws.subscribe(tokens)
     ws.set_mode(ws.MODE_LTP, tokens)
+    subscribed_tokens = tokens
 
 def on_close(ws, code, reason):
     print("WebSocket closed:", code, reason)
@@ -479,6 +515,8 @@ kws.on_ticks = on_ticks
 kws.on_connect = on_connect
 kws.on_close = on_close
 kws.on_error = on_error
+
+_configure_index_data(selected_index_key)
 
 print("Connecting to WebSocket...")
 kws.connect(threaded=True)

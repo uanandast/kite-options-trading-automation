@@ -8,6 +8,7 @@ let straddlePriceFromSocket = 0;
 let lastKnownStraddlePrice = 0;
 let pendingChartUpdate = false;
 let lastChartUpdate = Date.now();
+let currentSelectedIndex = 'nifty';
 
 function formatChange(val) {
     if (val > 0) return `<span class="positive">+${val}</span>`;
@@ -105,6 +106,13 @@ async function fetchOptionData() {
 
         spot_price = json.spot_price ?? null;
         previous_close = json.previous_close ?? null;
+        if (json.selected_index) {
+            currentSelectedIndex = String(json.selected_index).toLowerCase();
+            const indexSelect = document.getElementById('index-select');
+            if (indexSelect && !indexSelect.disabled && indexSelect.value !== currentSelectedIndex) {
+                indexSelect.value = currentSelectedIndex;
+            }
+        }
         updateSpotDisplay(json.spot_price, json.previous_close);
         document.getElementById('symbol').textContent = json.symbol || "Index";
         document.getElementById("recommendation").innerHTML = renderRecommendation(
@@ -641,6 +649,61 @@ async function triggerManualCancelSL() {
     }
 }
 
+async function loadIndexOptions() {
+    const indexSelect = document.getElementById('index-select');
+    if (!indexSelect) return;
+
+    try {
+        const response = await fetch('/indices');
+        const payload = await response.json();
+        if (!response.ok) {
+            throw new Error(payload.error || 'Failed to load index options');
+        }
+
+        const available = Array.isArray(payload.available) ? payload.available : [];
+        if (available.length > 0) {
+            indexSelect.innerHTML = available
+                .map(indexName => `<option value="${indexName}">${indexName.toUpperCase()}</option>`)
+                .join('');
+        }
+        currentSelectedIndex = String(payload.selected || 'nifty').toLowerCase();
+        indexSelect.value = currentSelectedIndex;
+    } catch (error) {
+        console.error('Error loading index options:', error);
+        showToast('Error', error.message || 'Could not load index options', 'error', 3000);
+    }
+}
+
+async function handleIndexChange(event) {
+    const indexSelect = event.target;
+    const requestedIndex = String(indexSelect.value || '').toLowerCase();
+    if (!requestedIndex || requestedIndex === currentSelectedIndex) return;
+
+    const previousIndex = currentSelectedIndex;
+    indexSelect.disabled = true;
+    try {
+        const response = await fetch('/set_index', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ index: requestedIndex })
+        });
+        const payload = await response.json();
+        if (!response.ok) {
+            throw new Error(payload.message || 'Failed to switch index');
+        }
+        currentSelectedIndex = String(payload.selected || requestedIndex).toLowerCase();
+        indexSelect.value = currentSelectedIndex;
+        showToast('Complete', payload.message || 'Index switched');
+        fetchOptionData();
+    } catch (error) {
+        console.error('Error switching index:', error);
+        indexSelect.value = previousIndex;
+        showToast('Error', error.message || 'Could not switch index', 'error', 3000);
+    } finally {
+        indexSelect.disabled = false;
+    }
+}
+
 document.addEventListener('DOMContentLoaded', () => {
     const exitButton = document.getElementById('manual-exit-btn');
     if (exitButton) {
@@ -653,6 +716,11 @@ document.addEventListener('DOMContentLoaded', () => {
     const cancelSlButton = document.getElementById('cancel-sl-btn');
     if (cancelSlButton) {
         cancelSlButton.addEventListener('click', triggerManualCancelSL);
+    }
+    const indexSelect = document.getElementById('index-select');
+    if (indexSelect) {
+        indexSelect.addEventListener('change', handleIndexChange);
+        loadIndexOptions();
     }
 });
 

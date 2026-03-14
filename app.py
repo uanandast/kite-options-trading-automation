@@ -24,9 +24,13 @@ manual_cancel_sl_in_progress = False
 kite_monitor_final = None
 get_current_iron_condor = None
 get_previous_day_close = None
+set_selected_index = None
+get_selected_index = None
+get_available_indices = None
 margin = 0
 previous_day_close = 0
 name = "Unknown"
+index_update_lock = Lock()
 
 
 def _read_kite_credentials():
@@ -82,6 +86,7 @@ def ensure_kite_connection():
 
 def initialize_runtime():
     global kite_monitor_final, get_current_iron_condor, get_previous_day_close
+    global set_selected_index, get_selected_index, get_available_indices
     global margin, previous_day_close, name
 
     if not ensure_kite_connection():
@@ -92,6 +97,9 @@ def initialize_runtime():
 
     get_current_iron_condor = delta_module.get_current_iron_condor
     get_previous_day_close = delta_module.get_previous_day_close
+    set_selected_index = delta_module.set_selected_index
+    get_selected_index = delta_module.get_selected_index
+    get_available_indices = delta_module.get_available_indices
 
     margin = kite_monitor_final.get_margin()
     previous_day_close, name = get_previous_day_close()
@@ -119,7 +127,8 @@ def update_iron_condor_data():
     refresh_interval_seconds = 0.2
     while True:
         try:
-            result, net_delta, options_data, strangle_credit, future_price, Skew,delta,spot_price = get_current_iron_condor()
+            with index_update_lock:
+                result, net_delta, options_data, strangle_credit, future_price, Skew,delta,spot_price = get_current_iron_condor()
 
             latest_iron_condor_data = {
                 'legs': result,
@@ -147,7 +156,44 @@ def iron_condor_data():
     data = latest_iron_condor_data.copy()
     data['previous_close'] = previous_day_close
     data['symbol'] = name
+    data['selected_index'] = get_selected_index() if get_selected_index else "nifty"
     return jsonify(data)
+
+
+@app.route('/indices')
+def indices():
+    if get_available_indices is None or get_selected_index is None:
+        return jsonify({"error": "Kite runtime not initialized"}), 503
+    return jsonify({
+        "available": get_available_indices(),
+        "selected": get_selected_index()
+    })
+
+
+@app.route('/set_index', methods=['POST'])
+def set_index():
+    global previous_day_close, name, latest_iron_condor_data
+    if set_selected_index is None:
+        return jsonify({"message": "Kite runtime not initialized"}), 503
+
+    payload = request.get_json(silent=True) or {}
+    index_name = str(payload.get("index", "")).strip().lower()
+    if not index_name:
+        return jsonify({"message": "Missing index value"}), 400
+
+    try:
+        with index_update_lock:
+            selected = set_selected_index(index_name)
+            previous_day_close, name = get_previous_day_close()
+            latest_iron_condor_data = {}
+        return jsonify({
+            "message": f"Index switched to {selected.upper()}",
+            "selected": selected,
+            "symbol": name
+        }), 200
+    except Exception as e:
+        print(f"❌ Error while switching index: {str(e)}")
+        return jsonify({"message": f"Failed to switch index: {str(e)}"}), 500
 
 
 @app.route('/pnl')

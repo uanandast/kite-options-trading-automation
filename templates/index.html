@@ -65,6 +65,29 @@
         .market-status .price {
             font-weight: 700;
         }
+        .index-selector {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            color: var(--text-secondary);
+        }
+        .index-selector label {
+            font-size: 0.9em;
+            font-weight: 500;
+        }
+        .index-selector select {
+            background: var(--background-tertiary);
+            color: var(--text-primary);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            padding: 6px 10px;
+            font-size: 0.9em;
+            outline: none;
+        }
+        .index-selector select:disabled {
+            opacity: 0.7;
+            cursor: wait;
+        }
 
         /* Main Content Grid */
         .main-content {
@@ -355,6 +378,14 @@
     <header class="main-header">
         <h1><i class="fa-solid fa-chart-line" style="color: var(--accent-primary);"></i> Option Chain Dashboard</h1>
 <div class="market-status">
+        <div class="index-selector">
+            <label for="index-select">Index</label>
+            <select id="index-select">
+                <option value="nifty">NIFTY</option>
+                <option value="sensex">SENSEX</option>
+                <option value="banknifty">BANKNIFTY</option>
+            </select>
+        </div>
         <span id="available-margin" class="symbol" style="margin-left: 30px;">Margin: ₹0</span>
     <span id="symbol" class="symbol">Index</span>
     <span id="spot-price" class="price">
