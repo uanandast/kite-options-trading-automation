@@ -14,7 +14,7 @@ import configparser
 from collections import defaultdict
 from Core.system_close import system_close
 from kiteconnect import KiteTicker
-import json
+import requests
 import matplotlib.pyplot as plt
 import pandas as pd
 from pathlib import Path
@@ -73,6 +73,24 @@ def beep():
     os.system('say "order updated"')
 
 
+# Telegram alert function
+def send_telegram(message):
+    BOT_TOKEN = config.get('Kite', 'BOT_TOKEN')
+    CHAT_ID = config.get('Kite', 'CHAT_ID')
+
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+    params = {
+        "chat_id": CHAT_ID,
+        "text": message
+    }
+
+    try:
+        requests.get(url, params=params, timeout=5)
+        print("📩 Telegram alert sent")
+    except Exception as e:
+        print(f"❌ Telegram error: {e}")
+
+
 
 def motivate_trader():
     response = client.models.generate_content(
@@ -108,6 +126,7 @@ def motivate_trader():
 )
     os.system(f'say "{response.text}"')
     print(f"💬 Motivational message: {response.text}")
+    send_telegram(f"💬 Motivational message: {response.text}")
 
 
 
@@ -115,6 +134,7 @@ def ask_and_sleep_mac():
     try:
         print("Locking Account...")
         system_close()
+        send_telegram("🚨 Max loss threshold breached. Account locked and Mac will sleep. Review the situation calmly before resuming trading.")
         motivate_trader()
         print("💤 Sleeping Mac...")
         time.sleep(60)

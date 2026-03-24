@@ -9,6 +9,7 @@ import sys
 import importlib
 import configparser
 from kiteconnect import KiteConnect
+import requests
 
 app = Flask(__name__)
 
@@ -31,6 +32,26 @@ margin = 0
 previous_day_close = 0
 name = "Unknown"
 index_update_lock = Lock()
+
+config = configparser.ConfigParser()
+config.read('Cred/Cred_kite_PREM.ini')
+
+# Telegram alert function
+def send_telegram(message):
+    BOT_TOKEN = config.get('Kite', 'BOT_TOKEN')
+    CHAT_ID = config.get('Kite', 'CHAT_ID')
+
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+    params = {
+        "chat_id": CHAT_ID,
+        "text": message
+    }
+
+    try:
+        requests.get(url, params=params, timeout=5)
+        print("📩 Telegram alert sent")
+    except Exception as e:
+        print(f"❌ Telegram error: {e}")
 
 
 def _read_kite_credentials():
@@ -314,8 +335,10 @@ def manual_cancel_sl():
 if __name__ == '__main__':
     try:
         initialize_runtime()
+        send_telegram("🚀 Trading bot started successfully on MacBook")
     except Exception as e:
         print(f"❌ Startup failed: {e}")
+        send_telegram(f"❌ Trading bot failed to start: {e}")
         sys.exit(1)
 
     thread1 = Thread(target=update_iron_condor_data, daemon=True)
