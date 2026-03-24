@@ -155,18 +155,35 @@ async function fetchOptionData() {
                 </thead>
                 <tbody>
         `;
-        Object.keys(strikes).sort((a, b) => a - b).forEach(strike => {
+        const sortedStrikes = Object.keys(strikes).map(Number).sort((a, b) => a - b);
+        let minDiff = Infinity;
+        let atmStrike = null;
+        if (typeof spot_price === 'number') {
+            sortedStrikes.forEach(strike => {
+                const diff = Math.abs(strike - spot_price);
+                if (diff < minDiff) {
+                    minDiff = diff;
+                    atmStrike = strike;
+                }
+            });
+        }
+
+        sortedStrikes.forEach(strike => {
             const ce = strikes[strike]['CE'] || {};
             const pe = strikes[strike]['PE'] || {};
+            const isAtm = (strike === atmStrike);
+            const rowClass = isAtm ? 'atm-row' : '';
+            const strikeClass = isAtm ? 'strike atm-strike' : 'strike';
+            
             html += `
-                <tr>
+                <tr class="${rowClass}">
                     <td class="calls small">${ce.delta !== undefined ? ce.delta.toFixed(2) : ''}</td>
                     <td class="calls small">${ce.oi_chg_pct !== undefined ? formatChange(ce.oi_chg_pct) : ''}</td>
                     <td class="calls small">${ce.oi_lakh !== undefined ? ce.oi_lakh : ''}</td>
                     <td class="calls small">${ce.oi !== undefined ? (ce.oi / 100000).toFixed(2) + ' L' : ''}</td>
                     <td class="calls small">${ce.ltp !== undefined ? `₹${ce.ltp} ${ce.ltp_chg_pct !== undefined ? '(' + formatChange(ce.ltp_chg_pct) + '%)' : ''}` : ''}</td>
                     <td class="calls small">${ce.iv !== undefined ? ce.iv.toFixed(2) : ''} ${ce.iv_chg !== undefined ? '(' + formatChange(ce.iv_chg) + ')' : ''}</td>
-                    <td class="strike">${strike}</td>
+                    <td class="${strikeClass}">${strike}</td>
                     <td class="puts small">${pe.iv !== undefined ? pe.iv.toFixed(2) : ''} ${pe.iv_chg !== undefined ? '(' + formatChange(pe.iv_chg) + ')' : ''}</td>
                     <td class="puts small">${pe.ltp !== undefined ? `₹${pe.ltp} ${pe.ltp_chg_pct !== undefined ? '(' + formatChange(pe.ltp_chg_pct) + '%)' : ''}` : ''}</td>
                     <td class="puts small">${pe.oi !== undefined ? (pe.oi / 100000).toFixed(2) + ' L' : ''}</td>
@@ -195,7 +212,7 @@ let pnlData = {
 // Add these functions for localStorage management
 function saveToLocalStorage() {
     try {
-        localStorage.setItem('pnlData', JSON.stringify(pnlData));
+        localStorage.setItem('pnlData_v2', JSON.stringify(pnlData));
     } catch (error) {
         console.error('Error saving to localStorage:', error);
     }
@@ -203,11 +220,28 @@ function saveToLocalStorage() {
 
 function loadFromLocalStorage() {
     try {
-        const savedData = localStorage.getItem('pnlData');
+        const savedData = localStorage.getItem('pnlData_v2');
         if (savedData) {
             const parsed = JSON.parse(savedData);
             if (Array.isArray(parsed.pnlSeries) && Array.isArray(parsed.straddleSeries)) {
-                return parsed;
+                
+                // Deduplicate and bucket to exact minutes to fix overlap bugs from old data
+                const minuteMapPnl = new Map();
+                parsed.pnlSeries.forEach(pt => {
+                    const tsm = Math.floor(pt[0] / 60000) * 60000;
+                    minuteMapPnl.set(tsm, pt[1]);
+                });
+                
+                const minuteMapStraddle = new Map();
+                parsed.straddleSeries.forEach(pt => {
+                    const tsm = Math.floor(pt[0] / 60000) * 60000;
+                    minuteMapStraddle.set(tsm, pt[1]);
+                });
+
+                const cleanPnl = Array.from(minuteMapPnl.entries()).sort((a,b) => a[0] - b[0]);
+                const cleanStraddle = Array.from(minuteMapStraddle.entries()).sort((a,b) => a[0] - b[0]);
+
+                return { pnlSeries: cleanPnl, straddleSeries: cleanStraddle };
             }
         }
     } catch (error) {
@@ -291,11 +325,11 @@ function updateChart() {
             pnlChart.updateSeries([
                 {
                     name: 'Net P&L',
-                    data: pnlData.pnlSeries
+                    data: [...pnlData.pnlSeries]
                 },
                 {
                     name: 'Straddle Price',
-                    data: pnlData.straddleSeries
+                    data: [...pnlData.straddleSeries]
                 }
             ], false);
             pnlChart.updateOptions({
@@ -501,7 +535,7 @@ function renderPnlChart() {
 
 // Update the clear chart function to also clear localStorage
 function clearChartData() {
-    localStorage.removeItem('pnlData');
+    localStorage.removeItem('pnlData_v2');
     pnlData.pnlSeries = [];
     pnlData.straddleSeries = [];
     pnlChart.updateSeries([
