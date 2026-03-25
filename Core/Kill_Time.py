@@ -28,6 +28,24 @@ user_id = config['Kite']['user_id']
 password = config['Kite']['password']
 totp_secret = config['Kite']['totp_secret']  
 
+# Telegram alert function
+def send_telegram(message):
+    BOT_TOKEN = config.get('Kite', 'BOT_TOKEN')
+    CHAT_ID = config.get('Kite', 'CHAT_ID')
+
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+    params = {
+        "chat_id": CHAT_ID,
+        "text": message
+    }
+
+    try:
+        requests.get(url, params=params, timeout=5)
+        print("📩 Telegram alert sent")
+    except Exception as e:
+        print(f"❌ Telegram error: {e}")
+
+
 def get_request_token():
     # Setup Brave Browser
     options = webdriver.ChromeOptions()
@@ -195,8 +213,10 @@ def get_request_token():
     finally:
         if success:
             os.system('say "Account Closed Successfully"')
+            send_telegram("✅ Account Closed Successfully")
         else:
             os.system('say "Account Closure Failed"')
+            send_telegram("❌ Account Closure Failed")
         driver.quit()
 
 # Run the flow

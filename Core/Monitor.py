@@ -599,6 +599,7 @@ def Exiting_closing_account(positions):
 def monitor_spreads():
     last_margin_update = 0  # Track last margin update time
     threshold_breach_start = None  # Track when pnl_total first breached threshold
+    account_close = False
     
     while True:       
         try:
@@ -767,7 +768,9 @@ def monitor_spreads():
                 if threshold_breach_start is None:
                     threshold_breach_start = current_time
                 elif current_time - threshold_breach_start >= 2:
-                    Exiting_closing_account(positions)
+                    if account_close ==False:
+                        Exiting_closing_account(positions)
+                        account_close = True
             else:
                 threshold_breach_start = None
         
