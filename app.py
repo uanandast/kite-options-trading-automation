@@ -15,17 +15,20 @@ import os
 
 
 
-# Load base .env first (if exists)
-load_dotenv()
-
-# Detect environment
+# Detect environment FIRST (must come from system or default file name)
 env = os.getenv("ENV")
 
+# If ENV is not set, try to infer from existing env files
 if not env:
-    print("❌ Environment variable 'ENV' not set (e.g., 'local' or 'prod'). Script closing.")
-    sys.exit(1)
+    if os.path.exists(".env.local"):
+        env = "local"
+    elif os.path.exists(".env.lightsail"):
+        env = "lightsail"
+    else:
+        print("❌ ENV not set and no .env.local or .env.lightsail found. Script closing.")
+        sys.exit(1)
 
-# Load environment-specific file
+# Now load the correct env file
 env_file = f".env.{env}"
 if not os.path.exists(env_file):
     print(f"❌ Environment file '{env_file}' not found. Script closing.")
@@ -33,7 +36,7 @@ if not os.path.exists(env_file):
 
 load_dotenv(env_file, override=True)
 
-# Re-verify ENV from the specific file
+# Confirm ENV after loading
 env = os.getenv("ENV")
 
 
