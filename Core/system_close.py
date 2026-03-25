@@ -30,8 +30,6 @@ load_dotenv(env_file, override=True)
 # Confirm ENV after loading
 env = os.getenv("ENV")
 
-
-
 def system_close():
     print("System close command executed successfully.")
     try:
@@ -39,7 +37,7 @@ def system_close():
         if env == "local":
             script_path = Path(__file__).parent / "Kill_Time.py"
         else:
-            script_path = Path(__file__).parent / "Kill_Time_prod.py"
+            script_path = Path(__file__).parent / "Kill_Time_Prod.py"
         if not script_path.exists():
             print(f"Target script not found: {script_path}")
             return

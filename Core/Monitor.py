@@ -136,10 +136,10 @@ def ask_and_sleep_mac():
         system_close()
         send_telegram("🚨 Max loss threshold breached. Account locked and Mac will sleep. Review the situation calmly before resuming trading.")
         motivate_trader()
-        print("💤 Sleeping Mac...")
-        time.sleep(60)
-        os.system("pmset sleepnow")
-        exit(0)
+        # print("💤 Sleeping Mac...")
+        # time.sleep(60)
+        # os.system("pmset sleepnow")
+        # exit(0)
         # else:
         #     print("🛑 Sleep cancelled by user.")
     except Exception as e:
