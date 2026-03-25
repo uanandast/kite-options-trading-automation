@@ -18,16 +18,24 @@ import os
 # Load base .env first (if exists)
 load_dotenv()
 
-# Detect environment (default = local)
-env = os.getenv("ENV", "local")
+# Detect environment
+env = os.getenv("ENV")
+
+if not env:
+    print("❌ Environment variable 'ENV' not set (e.g., 'local' or 'prod'). Script closing.")
+    sys.exit(1)
 
 # Load environment-specific file
 env_file = f".env.{env}"
-if os.path.exists(env_file):
-    load_dotenv(env_file, override=True)
+if not os.path.exists(env_file):
+    print(f"❌ Environment file '{env_file}' not found. Script closing.")
+    sys.exit(1)
 
-# Re-read ENV after loading correct file
-env = os.getenv("ENV", "local")
+load_dotenv(env_file, override=True)
+
+# Re-verify ENV from the specific file
+env = os.getenv("ENV")
+
 
 app = Flask(__name__)
 
