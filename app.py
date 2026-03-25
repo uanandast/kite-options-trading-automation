@@ -10,6 +10,24 @@ import importlib
 import configparser
 from kiteconnect import KiteConnect
 import requests
+from dotenv import load_dotenv   
+import os
+
+
+
+# Load base .env first (if exists)
+load_dotenv()
+
+# Detect environment (default = local)
+env = os.getenv("ENV", "local")
+
+# Load environment-specific file
+env_file = f".env.{env}"
+if os.path.exists(env_file):
+    load_dotenv(env_file, override=True)
+
+# Re-read ENV after loading correct file
+env = os.getenv("ENV", "local")
 
 app = Flask(__name__)
 
@@ -87,7 +105,10 @@ def verify_kite_connection():
 
 
 def run_login_script():
-    login_path = Path(__file__).parent/"Auth" / "login.py"
+    if env == "local":
+        login_path = Path(__file__).parent/"Auth" / "login.py"
+    else:
+        login_path = Path(__file__).parent/"Auth" / "login_prod.py"
     print("🔐 Running login.py to refresh access token...")
     subprocess.run([sys.executable, str(login_path)], check=True)
 
@@ -335,7 +356,10 @@ def manual_cancel_sl():
 if __name__ == '__main__':
     try:
         initialize_runtime()
-        send_telegram("🚀 Trading bot started successfully on MacBook")
+        if env == "local":  
+            send_telegram("🚀 Trading bot started successfully on MacBook")
+        else:
+            send_telegram("🚀 Trading bot started successfully on Lightsail")
     except Exception as e:
         print(f"❌ Startup failed: {e}")
         send_telegram(f"❌ Trading bot failed to start: {e}")

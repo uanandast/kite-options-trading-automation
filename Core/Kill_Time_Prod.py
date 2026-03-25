@@ -1,9 +1,9 @@
 import time
+from pathlib import Path
 import pyotp
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.service import Service
-from webdriver_manager.chrome import ChromeDriverManager
 from urllib.parse import urlparse, parse_qs
 import configparser
 from kiteconnect import KiteConnect
@@ -20,13 +20,15 @@ from datetime import datetime
 
 config = configparser.ConfigParser()
 
-config.read('Cred/Cred_kite_PREM.ini')
+config_path = Path(__file__).parent.parent / "Cred" / "Cred_kite_PREM.ini"
+config.read(config_path)
 
 api_key = config['Kite']['api_key']
 api_secret = config['Kite']['api_secret']
 user_id = config['Kite']['user_id']
 password = config['Kite']['password']
 totp_secret = config['Kite']['totp_secret']  
+
 
 # Telegram alert function
 def send_telegram(message):
@@ -47,16 +49,18 @@ def send_telegram(message):
 
 
 def get_request_token():
-    # Setup Brave Browser
+     # Setup Chrome for Lightsail
     options = webdriver.ChromeOptions()
-    options.binary_location = "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser"
-    #options.add_argument("--start-maximized")
-    options.add_argument("--headless")  # Run in background
-    options.add_argument("--disable-gpu")  # Optional for compatibility
-    options.add_argument("--no-sandbox")  # Optional for Linux
-    options.add_argument("--window-size=1920,1080")  # Set standard size
-    driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
+    options.binary_location = "/usr/bin/google-chrome"
+    options.add_argument("--headless=new")
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("--disable-gpu")
+    options.add_argument("--remote-debugging-port=9222")
 
+    service = Service("/usr/local/bin/chromedriver")
+    driver = webdriver.Chrome(service=service, options=options)
+    
     success = False
 
     def save_debug_screenshot(stage):
@@ -89,81 +93,124 @@ def get_request_token():
         raise last_error
 
     try:
-        login_url = f"https://kite.zerodha.com/"
+        login_url = "https://console.zerodha.com/"
         driver.get(login_url)
+        print(f"🌐 After opening login page: {driver.current_url}")
 
-        # Wait and login
-        time.sleep(2)
-        driver.find_element(By.ID, "userid").send_keys(user_id)
-        driver.find_element(By.ID, "password").send_keys(password)
+        # Click "Login with Kite"
+        wait = WebDriverWait(driver, 20)
+        login_kite_btn = wait.until(
+            EC.element_to_be_clickable((By.XPATH, "//button[contains(., 'Login with Kite')]") )
+        )
+        login_kite_btn.click()
+        print(f"🌐 After clicking Login with Kite: {driver.current_url}")
+
+        # Login step
+        username = wait.until(EC.presence_of_element_located((By.ID, "userid")))
+        username.send_keys(user_id)
+
+        password_el = driver.find_element(By.ID, "password")
+        password_el.send_keys(password)
+
         driver.find_element(By.XPATH, "//button[@type='submit']").click()
+        time.sleep(1)
+        driver.switch_to.default_content()
+        print(f"🌐 After password submit: {driver.current_url}")
 
-        # Wait for TOTP screen
         time.sleep(2)
-        otp = pyotp.TOTP(totp_secret).now()
-        print(f"✅ TOTP: {otp}")
-        driver.find_element(By.XPATH, "//input[@type='number']").send_keys(otp)
-        driver.find_element(By.XPATH, "//button[@type='submit']").click()
+        # TOTP step (with retry to avoid stale element issues)
+        for attempt in range(3):
+            try:
+                totp = pyotp.TOTP(totp_secret).now()
+                print(f"✅ TOTP: {totp}")
+
+                totp_input = wait.until(
+                    EC.element_to_be_clickable((By.ID, "userid"))
+                )
+
+                totp_input.clear()
+                totp_input.send_keys(totp)
+
+                driver.find_element(By.XPATH, "//button[@type='submit']").click()
+                time.sleep(2)
+                print(f"🌐 After TOTP submit: {driver.current_url}")
+                break
+
+            except Exception as e:
+                print(f"Retrying TOTP... {attempt+1}")
+                time.sleep(2)
+
         time.sleep(2)
 
+        # Wait for redirect back to console dashboard
+        WebDriverWait(driver, 20).until(
+            lambda d: "console.zerodha.com/dashboard" in d.current_url
+        )
+        print(f"✅ Logged in successfully, current URL: {driver.current_url}")
+        send_telegram(f"✅ Logged in successfully, current URL: {driver.current_url}")
+
+        # Directly navigate to segment activation page
+        time.sleep(2)  # small buffer for session stabilization
         driver.get("https://console.zerodha.com/account/segment-activation")
-        time.sleep(2)
+        print(f"🌐 Navigated to segment page: {driver.current_url}")
+
+        # Wait for segment page to load
+        WebDriverWait(driver, 20).until(
+            EC.presence_of_element_located((By.ID, "form_segment_manage"))
+        )
+        print("✅ Segment page loaded successfully")
     
         # clicking on nse equity
         try:
-            wait = WebDriverWait(driver, 10)
-            segment_element = wait.until(EC.element_to_be_clickable((
-                By.XPATH, "//label[@for='NSE_EQ']"
-            )))
-            segment_element.click()
-            print("✅ Segment clicked successfully.")
+            wait = WebDriverWait(driver, 20)
+            segment_element = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "#form_segment_manage label")))
+            driver.execute_script("arguments[0].scrollIntoView({block:'center'});", segment_element)
             time.sleep(1)
+            driver.execute_script("arguments[0].click();", segment_element)
+            print("✅ NSE_EQ clicked successfully.")
         except Exception as e:
-            print("❌ Error clicking segment:")
+            print("❌ Error clicking NSE_EQ:")
             print(f"Exception: {e}")
+            save_debug_screenshot("nse_eq_error")
             return None
-        
+
         # click on bse equity
         try:
-            wait = WebDriverWait(driver, 10)
-            segment_element = wait.until(EC.element_to_be_clickable((
-                By.XPATH, "//label[@for='BSE_EQ']"
-            )))
-            segment_element.click()
-            print("✅ Segment clicked successfully.")
+            segment_element = wait.until(EC.presence_of_element_located((By.XPATH, "//label[@for='BSE_EQ']")))
+            driver.execute_script("arguments[0].scrollIntoView({block:'center'});", segment_element)
             time.sleep(1)
+            driver.execute_script("arguments[0].click();", segment_element)
+            print("✅ BSE_EQ clicked successfully.")
         except Exception as e:
-            print("❌ Error clicking segment:")
+            print("❌ Error clicking BSE_EQ:")
             print(f"Exception: {e}")
+            save_debug_screenshot("bse_eq_error")
             return None
-
-
 
         # click on nse fno
         try:
-            wait = WebDriverWait(driver, 10)
-            segment_element = wait.until(EC.element_to_be_clickable((
-                By.XPATH, "//label[@for='NSE_FO']"
-            )))
-            segment_element.click()
-            print("✅ Segment clicked successfully.")
+            segment_element = wait.until(EC.presence_of_element_located((By.XPATH, "//label[@for='NSE_FO']")))
+            driver.execute_script("arguments[0].scrollIntoView({block:'center'});", segment_element)
             time.sleep(1)
+            driver.execute_script("arguments[0].click();", segment_element)
+            print("✅ NSE_FO clicked successfully.")
         except Exception as e:
-            print("❌ Error clicking segment:")
+            print("❌ Error clicking NSE_FO:")
             print(f"Exception: {e}")
+            save_debug_screenshot("nse_fo_error")
             return None
+
         # click on bse fno
         try:
-            wait = WebDriverWait(driver, 10)
-            segment_element = wait.until(EC.element_to_be_clickable((
-                By.XPATH, "//label[@for='BSE_FO']"
-            )))
-            segment_element.click()
-            print("✅ Segment clicked successfully.")
+            segment_element = wait.until(EC.presence_of_element_located((By.XPATH, "//label[@for='BSE_FO']")))
+            driver.execute_script("arguments[0].scrollIntoView({block:'center'});", segment_element)
             time.sleep(1)
+            driver.execute_script("arguments[0].click();", segment_element)
+            print("✅ BSE_FO clicked successfully.")
         except Exception as e:
-            print("❌ Error clicking segment:")
+            print("❌ Error clicking BSE_FO:")
             print(f"Exception: {e}")
+            save_debug_screenshot("bse_fo_error")
             return None
 
         # Clicking on continue
@@ -212,13 +259,14 @@ def get_request_token():
 
     finally:
         if success:
-            os.system('say "Account Closed Successfully"')
+            print("✅ Account Closed Successfully")
             send_telegram("✅ Account Closed Successfully")
         else:
-            os.system('say "Account Closure Failed"')
+            print("❌ Account Closure Failed")
             send_telegram("❌ Account Closure Failed")
         driver.quit()
 
 # Run the flow
 if __name__ == "__main__":
     get_request_token()
+
