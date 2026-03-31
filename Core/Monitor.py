@@ -556,6 +556,7 @@ def routine_close():
     current_time = time.localtime()
     if current_time.tm_hour >= 22:
         print("Routine close: It's after 10 PM. Exiting all positions and shutting down.")
+        send_telegram("Routine close: It's after 10 PM. Exiting all positions and shutting down.")
         exit(0)
 
 
