@@ -124,7 +124,7 @@ def motivate_trader():
         )
     },
 )
-    os.system(f'say "{response.text}"')
+    #os.system(f'say "{response.text}"')
     print(f"💬 Motivational message: {response.text}")
     send_telegram(f"💬 Motivational message: {response.text}")
 
@@ -551,6 +551,13 @@ def Exiting_position(positions):
             "error": str(e),
         }
 
+def routine_close():
+    #exit the program after 10 PM
+    current_time = time.localtime()
+    if current_time.tm_hour >= 22:
+        print("Routine close: It's after 10 PM. Exiting all positions and shutting down.")
+        exit(0)
+
 
 
 
@@ -773,7 +780,7 @@ def monitor_spreads():
                         account_close = True
             else:
                 threshold_breach_start = None
-        
+            routine_close()
             time.sleep(.2)  # Standard monitoring interval
         except Exception as e:
             print(f"❌ Error in monitor_spreads loop: {e}")
