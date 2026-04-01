@@ -420,7 +420,8 @@ def exit_position(pos, side):
                 quantity=chunk_qty,
                 order_type="MARKET",
                 product=pos["product"],
-                variety="regular"
+                variety="regular",
+                market_protection=-1
             )
             elapsed = time.time() - start_ts
             print(f"✅ Exit order placed: {order_id} ({elapsed:.2f}s)")
@@ -501,8 +502,8 @@ def Exiting_position(positions):
     try:
         print("Exiting all Postions...")
 
-        short_legs = [p for p in positions if p['quantity'] < 0 and p['tradingsymbol'].endswith(("CE", "PE")) and p['exchange'] in ('BFO','NFO')]
-        long_legs = [p for p in positions if p['quantity'] > 0 and p['tradingsymbol'].endswith(("CE", "PE")) and p['exchange'] in ('BFO','NFO')]
+        short_legs = [p for p in positions if p['quantity'] < 0 and p['tradingsymbol'].endswith(("CE", "PE")) and p['exchange'] in ('BFO','NFO','MCX')]
+        long_legs = [p for p in positions if p['quantity'] > 0 and p['tradingsymbol'].endswith(("CE", "PE")) and p['exchange'] in ('BFO','NFO','MCX')]
 
         short_legs = [p for p in short_legs if p['quantity'] != 0]
         long_legs = [p for p in long_legs if p['quantity'] != 0]
