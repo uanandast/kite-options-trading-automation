@@ -163,7 +163,7 @@ def get_request_token():
         # clicking on nse equity
         try:
             wait = WebDriverWait(driver, 20)
-            segment_element = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "#form_segment_manage label")))
+            segment_element = wait.until(EC.presence_of_element_located((By.XPATH, "//label[@for='NSE_EQ']")))
             driver.execute_script("arguments[0].scrollIntoView({block:'center'});", segment_element)
             time.sleep(1)
             driver.execute_script("arguments[0].click();", segment_element)
@@ -211,6 +211,19 @@ def get_request_token():
             print("❌ Error clicking BSE_FO:")
             print(f"Exception: {e}")
             save_debug_screenshot("bse_fo_error")
+            return None
+                
+        #Click on Commodity
+        try:
+            segment_element = wait.until(EC.presence_of_element_located((By.XPATH, "//label[@for='NSE_COM']")))
+            driver.execute_script("arguments[0].scrollIntoView({block:'center'});", segment_element)
+            time.sleep(1)
+            driver.execute_script("arguments[0].click();", segment_element)
+            print("✅ NSE_COM clicked successfully.")
+        except Exception as e:
+            print("❌ Error clicking NSE_COM:")
+            print(f"Exception: {e}")
+            save_debug_screenshot("nse_com_error")
             return None
 
         # Clicking on continue

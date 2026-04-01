@@ -165,6 +165,21 @@ def get_request_token():
             print("❌ Error clicking segment:")
             print(f"Exception: {e}")
             return None
+        
+        # click on nse commodity
+        try:
+            wait = WebDriverWait(driver, 10)
+            segment_element = wait.until(EC.element_to_be_clickable((
+                By.XPATH, "//label[@for='NSE_COM']"
+            )))
+            segment_element.click()
+            print("✅ Segment clicked successfully.")
+            time.sleep(1)
+        except Exception as e:
+            print("❌ Error clicking segment:")
+            print(f"Exception: {e}")
+            return None
+
 
         # Clicking on continue
         try:
