@@ -43,6 +43,10 @@
             --call-header: rgba(255, 91, 91, 0.12);
             --put-bg: rgba(33, 197, 93, 0.04);
             --put-header: rgba(33, 197, 93, 0.12);
+
+            /* Split layout variables */
+            --live-panel-size: 64%;
+            --main-panel-gap: 14px;
         }
 
         /* General Body Styles */
@@ -50,13 +54,94 @@
             background-color: var(--bg-main);
             background-image: 
                 radial-gradient(circle at 15% 50%, rgba(31, 139, 255, 0.04), transparent 25%),
-                radial-gradient(circle at 85% 30%, rgba(33, 197, 93, 0.04), transparent 25%);
+                radial-gradient(circle at 85% 30%, rgba(33, 197, 93, 0.04), transparent 25%),
+                linear-gradient(160deg, rgba(15, 23, 42, 0.85), rgba(8, 47, 73, 0.2));
             background-attachment: fixed;
             color: var(--text-primary);
             font-family: 'Inter', -apple-system, sans-serif;
             margin: 0;
             padding: 0;
             line-height: 1.5;
+        }
+
+        .dashboard-shell {
+            max-width: 1800px;
+            margin: 0 auto;
+            padding: 0 40px;
+        }
+
+        .top-cockpit {
+            margin-top: 20px;
+            padding: 16px 18px;
+            border-radius: 14px;
+            border: 1px solid var(--border-light);
+            background: linear-gradient(135deg, rgba(11, 18, 32, 0.84), rgba(15, 23, 42, 0.62));
+            backdrop-filter: blur(8px);
+            box-shadow: 0 12px 26px rgba(0, 0, 0, 0.22);
+        }
+        .cockpit-controls {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px;
+            margin-bottom: 12px;
+            justify-content: center;
+            align-items: center;
+        }
+        .cockpit-control {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            background: rgba(0, 0, 0, 0.25);
+            border: 1px solid var(--border-light);
+            border-radius: 10px;
+            padding: 8px 10px;
+        }
+        .cockpit-control label {
+            font-size: 0.78rem;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+            color: var(--text-secondary);
+            font-weight: 600;
+        }
+        .cockpit-control select {
+            background: rgba(0, 0, 0, 0.3);
+            color: var(--text-primary);
+            border: 1px solid var(--border-light);
+            border-radius: 8px;
+            padding: 6px 10px;
+            font-size: 0.9rem;
+            outline: none;
+            cursor: pointer;
+        }
+        .cockpit-vitals {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+            gap: 10px;
+        }
+        .vital-card {
+            background: rgba(0, 0, 0, 0.26);
+            border: 1px solid var(--border-light);
+            border-radius: 10px;
+            padding: 10px 12px;
+        }
+        .vital-card.is-hidden {
+            display: none;
+        }
+        .vital-label {
+            font-size: 0.72rem;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            margin-bottom: 3px;
+        }
+        .vital-value {
+            font-size: 1.2rem;
+            font-weight: 700;
+            color: var(--text-primary);
+            font-variant-numeric: tabular-nums;
+        }
+        .vital-value.small {
+            font-size: 1rem;
         }
 
         /* Main Header - Glassmorphic */
@@ -145,12 +230,11 @@
 
         /* Main Content Grid */
         .main-content {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 24px;
-            padding: 24px 40px;
-            max-width: 1800px;
-            margin: 0 auto;
+            display: flex;
+            align-items: stretch;
+            gap: var(--main-panel-gap);
+            padding: 24px 0;
+            margin: 0;
         }
 
         /* Premium Card Styles */
@@ -165,6 +249,43 @@
             display: flex;
             flex-direction: column;
             transition: transform 0.3s ease, box-shadow 0.3s ease;
+        }
+        #live-pnl-card {
+            min-height: 640px;
+            flex: 0 0 var(--live-panel-size);
+            overflow: auto;
+        }
+        #strategy-card {
+            min-height: 560px;
+            flex: 1 1 auto;
+            overflow: auto;
+        }
+        .panel-splitter {
+            width: 10px;
+            cursor: col-resize;
+            border-radius: 999px;
+            background: linear-gradient(180deg, rgba(31, 139, 255, 0.5), rgba(31, 139, 255, 0.1));
+            border: 1px solid rgba(31, 139, 255, 0.35);
+            align-self: stretch;
+            transition: box-shadow 0.2s ease, transform 0.2s ease;
+            touch-action: none;
+            position: relative;
+        }
+        .panel-splitter::before {
+            content: "";
+            position: absolute;
+            left: 50%;
+            top: 50%;
+            transform: translate(-50%, -50%);
+            width: 2px;
+            height: 42px;
+            border-radius: 999px;
+            background: rgba(255, 255, 255, 0.65);
+        }
+        .panel-splitter:hover,
+        .panel-splitter.dragging {
+            box-shadow: 0 0 16px rgba(31, 139, 255, 0.45);
+            transform: scaleX(1.08);
         }
         .card:hover {
             box-shadow: 0 12px 48px rgba(0, 0, 0, 0.25);
@@ -184,7 +305,7 @@
         /* Left Panel: P&L Chart */
         #pnl-chart {
             flex-grow: 1;
-            min-height: 320px;
+            min-height: 460px;
             width: 100%;
         }
         .chart-controls {
@@ -544,9 +665,8 @@
 
         /* Responsive Design */
         @media (max-width: 1400px) {
-            .main-content {
-                padding: 20px;
-                gap: 20px;
+            .dashboard-shell {
+                padding: 0 20px;
             }
             .option-chain-container {
                 padding: 20px;
@@ -554,13 +674,40 @@
         }
         @media (max-width: 1200px) {
             .main-content {
-                grid-template-columns: 1fr;
+                flex-direction: column;
+            }
+            #live-pnl-card,
+            #strategy-card {
+                flex: 1 1 auto;
+            }
+            .panel-splitter {
+                display: none;
             }
             .metrics-row {
                 grid-template-columns: repeat(2, 1fr);
             }
+            .cockpit-vitals {
+                grid-template-columns: repeat(3, minmax(130px, 1fr));
+            }
         }
         @media (max-width: 768px) {
+            .dashboard-shell {
+                padding: 0 12px;
+            }
+            .top-cockpit {
+                margin-top: 12px;
+                padding: 12px;
+            }
+            .cockpit-controls {
+                gap: 8px;
+            }
+            .cockpit-control {
+                width: 100%;
+                justify-content: space-between;
+            }
+            .cockpit-vitals {
+                grid-template-columns: repeat(2, minmax(120px, 1fr));
+            }
             .main-header {
                 flex-direction: column;
                 gap: 16px;
@@ -576,7 +723,7 @@
                 justify-content: center;
             }
             .main-content {
-                padding: 12px;
+                padding: 12px 0;
                 gap: 12px;
             }
             .card {
@@ -601,15 +748,7 @@
     <header class="main-header">
         <h1><i class="fa-solid fa-chart-line" style="color: var(--accent-primary);"></i> Option Chain Dashboard</h1>
 <div class="market-status">
-        <div class="index-selector">
-            <label for="index-select">Index</label>
-            <select id="index-select">
-                <option value="nifty">NIFTY</option>
-                <option value="sensex">SENSEX</option>
-                <option value="banknifty">BANKNIFTY</option>
-            </select>
-        </div>
-        <span id="available-margin" class="symbol" style="margin-left: 30px;">Margin: ₹0</span>
+        <span id="available-margin" class="symbol">Margin: ₹0</span>
     <span id="symbol" class="symbol">Index</span>
     <span id="spot-price" class="price">
         <i class="fa-solid fa-indian-rupee-sign"></i> 
@@ -619,8 +758,60 @@
 </div>
     </header>
 
+    <div class="dashboard-shell">
+    <section class="top-cockpit" aria-label="Trading cockpit">
+        <div class="cockpit-controls">
+            <div class="cockpit-control">
+                <label for="index-select">Index</label>
+                <select id="index-select">
+                    <option value="nifty">NIFTY</option>
+                    <option value="sensex">SENSEX</option>
+                    <option value="banknifty">BANKNIFTY</option>
+                </select>
+            </div>
+            <div class="cockpit-control">
+                <label for="cockpit-view">View</label>
+                <select id="cockpit-view">
+                    <option value="chart_table" selected>Chart + Table</option>
+                    <option value="chart">Chart Only</option>
+                    <option value="table">Table Only</option>
+                </select>
+            </div>
+        </div>
+        <div class="cockpit-vitals" id="cockpit-vitals">
+            <div class="vital-card" id="vital-card-symbol">
+                <div class="vital-label">Symbol</div>
+                <div class="vital-value" id="vital-symbol">--</div>
+            </div>
+            <div class="vital-card" id="vital-card-spot">
+                <div class="vital-label">Spot</div>
+                <div class="vital-value" id="vital-spot">--</div>
+            </div>
+            <div class="vital-card" id="vital-card-atm">
+                <div class="vital-label">ATM Strike</div>
+                <div class="vital-value" id="vital-atm">--</div>
+            </div>
+            <div class="vital-card" id="vital-card-price">
+                <div class="vital-label">Price</div>
+                <div class="vital-value" id="vital-price">--</div>
+            </div>
+            <div class="vital-card" id="vital-card-low">
+                <div class="vital-label">Low</div>
+                <div class="vital-value" id="vital-low">--</div>
+            </div>
+            <div class="vital-card" id="vital-card-high">
+                <div class="vital-label">High</div>
+                <div class="vital-value" id="vital-high">--</div>
+            </div>
+            <div class="vital-card" id="vital-card-updated">
+                <div class="vital-label">Last Updated</div>
+                <div class="vital-value small" id="vital-updated">--</div>
+            </div>
+        </div>
+    </section>
+
     <main class="main-content">
-        <div class="card">
+        <div id="live-pnl-card" class="card">
             <h3 class="card-title"><i class="fa-solid fa-wave-square"></i> Live P&L</h3>
             <div id="pnl-chart"></div>
             <div class="chart-controls">
@@ -630,7 +821,9 @@
             </div>
         </div>
 
-        <div class="card">
+        <div id="main-splitter" class="panel-splitter" role="separator" aria-label="Resize Live PnL panel" aria-orientation="vertical"></div>
+
+        <div id="strategy-card" class="card">
             <h3 class="card-title"><i class="fa-solid fa-star" style="color: var(--accent-secondary);"></i> Strategy & Vitals</h3>
             <div id="recommendation">
                 <table class="recommendation-table">
@@ -656,6 +849,7 @@
 </div>
         </div>
     </main>
+    </div>
 
     <div class="option-chain-container card">
         <h2 class="card-title" style="justify-content: center;"><i class="fa-solid fa-table-cells"></i> Option Chain</h2>

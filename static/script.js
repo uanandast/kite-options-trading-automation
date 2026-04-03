@@ -9,8 +9,16 @@ let lastKnownStraddlePrice = 0;
 let pendingChartUpdate = false;
 let lastChartUpdate = Date.now();
 let currentSelectedIndex = 'nifty';
+const SPLITTER_STORAGE_KEY = 'dashboardSplitterWidth_v1';
+let observedStraddleLow = null;
+let observedStraddleHigh = null;
+
+function isValidNumber(value) {
+    return typeof value === 'number' && Number.isFinite(value);
+}
 
 function formatChange(val) {
+    if (!isValidNumber(val)) return `<span class="neutral">-</span>`;
     if (val > 0) return `<span class="positive">+${val}</span>`;
     if (val < 0) return `<span class="negative">${val}</span>`;
     return `<span class="neutral">${val}</span>`;
@@ -21,46 +29,49 @@ function renderRecommendation(legs, net_delta, strangle_credit, future_price, sk
     html += `<table class="recommendation-table" border="1">
         <tr><th>Leg</th><th>Strike</th><th>Type</th><th>LTP</th><th>Delta</th></tr>`;
 
-    if (!legs || typeof legs !== 'object') {
-        console.warn("Invalid or missing legs data:", legs);
-        html += `<tr><td colspan="5">No legs data available.</td></tr></table>`;
-        return html;
-    }
-
-
+    const hasLegs = legs && typeof legs === 'object';
     const orderedLegs = ['hedge_pe', 'short_pe', 'short_ce', 'hedge_ce'];
+    let availableRows = 0;
     orderedLegs.forEach(leg => {
-        const data = legs[leg];
+        const data = hasLegs ? legs[leg] : null;
         if (!data) return;  // skip if data is missing
+        availableRows += 1;
+        const strike = data.strike ?? '-';
+        const type = data.type ?? '-';
+        const ltp = isValidNumber(Number(data.ltp)) ? `₹${formatIndianNumber(Number(data.ltp))}` : '-';
+        const legDelta = isValidNumber(Number(data.delta)) ? Number(data.delta).toFixed(2) : '-';
         html += `<tr>
             <td>${leg.replace('_', ' ').toUpperCase()}</td>
-            <td>${data.strike}</td>
-            <td>${data.type}</td>
-            <td>₹${data.ltp}</td>
-            <td>${data.delta.toFixed(2)}</td>
+            <td>${strike}</td>
+            <td>${type}</td>
+            <td>${ltp}</td>
+            <td>${legDelta}</td>
         </tr>`;
     });
+    if (availableRows === 0) {
+        html += `<tr><td colspan="5">No legs data available.</td></tr>`;
+    }
     html += `</table>`;
-    html += `
-     <div class="metrics-row">
-      <div class="metric">
-        <span class="label">Net Delta:</span>
-        <span class="value"><strong>${net_delta !== undefined && net_delta !== null ? net_delta.toFixed(3) : '-'}</strong></span>
-      </div>
-      <div class="metric">
-        <span class="label">Straddle Price:</span>
-        <span class="value"><strong>₹${strangle_credit !== undefined && strangle_credit !== null ? formatIndianNumber(strangle_credit) : '-'}</strong></span>
-      </div>
-      <div class="metric">
-        <span class="label">Synth Fut Price:</span>
-        <span class="value"><strong>₹${future_price !== undefined && future_price !== null ? formatIndianNumber(future_price) : '-'}</strong></span>
-      </div>
-      <div class="metric">
-        <span class="label">Skew:</span>
-        <span class="value"><strong>${skew !== undefined && skew !== null ? skew.toFixed(2) : '-'}</strong></span>
-      </div>
-    </div>
-  `;
+
+    const metrics = [
+        isValidNumber(Number(net_delta)) ? { label: 'Net Delta', value: Number(net_delta).toFixed(3) } : null,
+        isValidNumber(Number(strangle_credit)) ? { label: 'Straddle Price', value: `₹${formatIndianNumber(Number(strangle_credit))}` } : null,
+        isValidNumber(Number(future_price)) ? { label: 'Synth Fut Price', value: `₹${formatIndianNumber(Number(future_price))}` } : null,
+        isValidNumber(Number(skew)) ? { label: 'Skew', value: Number(skew).toFixed(2) } : null
+    ].filter(Boolean);
+
+    if (metrics.length > 0) {
+        html += `<div class="metrics-row">`;
+        metrics.forEach(metric => {
+            html += `
+                <div class="metric">
+                    <span class="label">${metric.label}:</span>
+                    <span class="value"><strong>${metric.value}</strong></span>
+                </div>
+            `;
+        });
+        html += `</div>`;
+    }
     return html;
 }
 
@@ -71,17 +82,137 @@ function updateSpotDisplay(spotPrice, previousClose) {
     const container = document.getElementById('spot-price');
 
     // Calculate point and percent change
-    const pointChange = spotPrice - previousClose;
-    const percentChange = (pointChange / previousClose) * 100;
+    const validSpot = isValidNumber(Number(spotPrice)) ? Number(spotPrice) : null;
+    const validPrevClose = isValidNumber(Number(previousClose)) ? Number(previousClose) : null;
+
+    if (validSpot === null || validPrevClose === null || validPrevClose === 0) {
+        spotValueEl.textContent = validSpot !== null ? validSpot.toFixed(2) : '--';
+        spotChangeEl.textContent = '(--%)';
+        container.className = 'price neutral';
+        return;
+    }
+
+    const pointChange = validSpot - validPrevClose;
+    const percentChange = (pointChange / validPrevClose) * 100;
     const isPositive = pointChange >= 0;
 
     // Update display
-    spotValueEl.textContent = spotPrice.toFixed(2);
+    spotValueEl.textContent = validSpot.toFixed(2);
     const sign = isPositive ? "+" : "";
     spotChangeEl.textContent = `${sign}${pointChange.toFixed(2)} (${sign}${percentChange.toFixed(2)}%)`;
 
     // Update color
     container.className = "price " + (isPositive ? "positive" : "negative");
+}
+
+function setVitalValue(cardId, valueId, valueText, isAvailable = true) {
+    const card = document.getElementById(cardId);
+    const valueEl = document.getElementById(valueId);
+    if (!card || !valueEl) return;
+
+    if (!isAvailable) {
+        card.classList.add('is-hidden');
+        return;
+    }
+
+    card.classList.remove('is-hidden');
+    valueEl.textContent = valueText;
+}
+
+function updateTopCockpit(json, atmStrike = null) {
+    const symbol = json.symbol || currentSelectedIndex?.toUpperCase() || '--';
+    const spot = isValidNumber(Number(json.spot_price)) ? `₹${formatIndianNumber(Number(json.spot_price))}` : '--';
+    const priceNum = isValidNumber(Number(json.strangle_credit)) ? Number(json.strangle_credit) : null;
+    if (isValidNumber(priceNum)) {
+        observedStraddleLow = observedStraddleLow === null ? priceNum : Math.min(observedStraddleLow, priceNum);
+        observedStraddleHigh = observedStraddleHigh === null ? priceNum : Math.max(observedStraddleHigh, priceNum);
+    }
+    const lowNum = isValidNumber(Number(json.low)) ? Number(json.low) : observedStraddleLow;
+    const highNum = isValidNumber(Number(json.high)) ? Number(json.high) : observedStraddleHigh;
+    const updated = new Date().toLocaleString('en-IN', { hour12: true });
+
+    setVitalValue('vital-card-symbol', 'vital-symbol', symbol, true);
+    setVitalValue('vital-card-spot', 'vital-spot', spot, spot !== '--');
+    setVitalValue('vital-card-atm', 'vital-atm', atmStrike !== null ? String(atmStrike) : '--', atmStrike !== null);
+    setVitalValue('vital-card-price', 'vital-price', priceNum !== null ? `₹${formatIndianNumber(priceNum)}` : '--', priceNum !== null);
+    setVitalValue('vital-card-low', 'vital-low', lowNum !== null ? `₹${formatIndianNumber(lowNum)}` : '--', lowNum !== null);
+    setVitalValue('vital-card-high', 'vital-high', highNum !== null ? `₹${formatIndianNumber(highNum)}` : '--', highNum !== null);
+    setVitalValue('vital-card-updated', 'vital-updated', updated, true);
+}
+
+function setMainViewMode(mode) {
+    const liveCard = document.getElementById('live-pnl-card');
+    const strategyCard = document.getElementById('strategy-card');
+    const splitter = document.getElementById('main-splitter');
+    if (!liveCard || !strategyCard || !splitter) return;
+
+    if (mode === 'chart') {
+        liveCard.style.display = '';
+        strategyCard.style.display = 'none';
+        splitter.style.display = 'none';
+    } else if (mode === 'table') {
+        liveCard.style.display = 'none';
+        strategyCard.style.display = '';
+        splitter.style.display = 'none';
+    } else {
+        liveCard.style.display = '';
+        strategyCard.style.display = '';
+        splitter.style.display = '';
+    }
+}
+
+function initializePanelSplitter() {
+    const mainContent = document.querySelector('.main-content');
+    const splitter = document.getElementById('main-splitter');
+    if (!mainContent || !splitter) return;
+
+    const savedWidth = Number(localStorage.getItem(SPLITTER_STORAGE_KEY));
+    if (isValidNumber(savedWidth) && savedWidth >= 35 && savedWidth <= 80) {
+        document.documentElement.style.setProperty('--live-panel-size', `${savedWidth}%`);
+    }
+
+    let dragging = false;
+
+    const onMove = (clientX) => {
+        const rect = mainContent.getBoundingClientRect();
+        const rawPercent = ((clientX - rect.left) / rect.width) * 100;
+        const clampedPercent = Math.min(80, Math.max(35, rawPercent));
+        document.documentElement.style.setProperty('--live-panel-size', `${clampedPercent}%`);
+        localStorage.setItem(SPLITTER_STORAGE_KEY, String(clampedPercent));
+    };
+
+    const stopDrag = () => {
+        if (!dragging) return;
+        dragging = false;
+        splitter.classList.remove('dragging');
+        document.body.style.userSelect = '';
+        window.removeEventListener('mousemove', onMouseMove);
+        window.removeEventListener('mouseup', stopDrag);
+    };
+
+    const onMouseMove = (event) => {
+        if (!dragging) return;
+        onMove(event.clientX);
+    };
+
+    splitter.addEventListener('mousedown', (event) => {
+        if (window.innerWidth <= 1200) return;
+        dragging = true;
+        splitter.classList.add('dragging');
+        document.body.style.userSelect = 'none';
+        onMove(event.clientX);
+        window.addEventListener('mousemove', onMouseMove);
+        window.addEventListener('mouseup', stopDrag);
+    });
+}
+
+function initializeCockpitControls() {
+    const viewSelect = document.getElementById('cockpit-view');
+
+    if (viewSelect) {
+        viewSelect.addEventListener('change', (event) => setMainViewMode(event.target.value));
+        setMainViewMode(viewSelect.value);
+    }
 }
 
 
@@ -108,10 +239,6 @@ async function fetchOptionData() {
         previous_close = json.previous_close ?? null;
         if (json.selected_index) {
             currentSelectedIndex = String(json.selected_index).toLowerCase();
-            const indexSelect = document.getElementById('index-select');
-            if (indexSelect && !indexSelect.disabled && indexSelect.value !== currentSelectedIndex) {
-                indexSelect.value = currentSelectedIndex;
-            }
         }
         updateSpotDisplay(json.spot_price, json.previous_close);
         document.getElementById('symbol').textContent = json.symbol || "Index";
@@ -167,6 +294,7 @@ async function fetchOptionData() {
                 }
             });
         }
+        updateTopCockpit(json, atmStrike);
 
         sortedStrikes.forEach(strike => {
             const ce = strikes[strike]['CE'] || {};
@@ -431,7 +559,7 @@ function renderPnlChart() {
     const options = {
         chart: {
             type: 'line',
-            height: 400,
+            height: 520,
             zoom: { enabled: true, type: 'x', autoScaleYaxis: true },
             animations: {
                 enabled: true,
@@ -756,6 +884,8 @@ document.addEventListener('DOMContentLoaded', () => {
         indexSelect.addEventListener('change', handleIndexChange);
         loadIndexOptions();
     }
+    initializePanelSplitter();
+    initializeCockpitControls();
 });
 
 // Update the interval calls
