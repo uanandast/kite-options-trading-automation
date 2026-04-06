@@ -71,8 +71,9 @@
         }
 
         .top-cockpit {
-            margin-top: 20px;
-            padding: 16px 18px;
+            margin-top: 8px;
+            margin-bottom: 0;
+            padding: 10px 14px;
             border-radius: 14px;
             border: 1px solid var(--border-light);
             background: linear-gradient(135deg, rgba(11, 18, 32, 0.84), rgba(15, 23, 42, 0.62));
@@ -80,7 +81,7 @@
             box-shadow: 0 12px 26px rgba(0, 0, 0, 0.22);
         }
         .cockpit-controls {
-            display: flex;
+            display: none;
             flex-wrap: wrap;
             gap: 12px;
             margin-bottom: 12px;
@@ -153,6 +154,7 @@
             border-bottom: 1px solid var(--border-light);
             display: flex;
             justify-content: space-between;
+            gap: 16px;
             align-items: center;
             position: sticky;
             top: 0;
@@ -187,6 +189,21 @@
             border: 1px solid var(--border-light);
             display: inline-flex;
             align-items: center;
+        }
+        .header-controls {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex-shrink: 0;
+        }
+        .main-header .cockpit-control {
+            padding: 5px 10px;
+            border-radius: 8px;
+            background: rgba(0, 0, 0, 0.25);
+            border: 1px solid var(--border-light);
+            display: flex;
+            align-items: center;
+            gap: 8px;
         }
 
         .index-selector {
@@ -778,9 +795,14 @@
             .cockpit-controls {
                 gap: 8px;
             }
-            .cockpit-control {
+            .top-cockpit .cockpit-control {
                 width: 100%;
                 justify-content: space-between;
+            }
+            .header-controls {
+                width: 100%;
+                justify-content: center;
+                flex-wrap: wrap;
             }
             .cockpit-vitals {
                 grid-template-columns: repeat(2, minmax(120px, 1fr));
@@ -869,20 +891,7 @@
 
     <header class="main-header">
         <h1><i class="fa-solid fa-chart-line" style="color: var(--accent-primary);"></i> Option Chain Dashboard</h1>
-<div class="market-status">
-        <span id="available-margin" class="symbol">Margin: ₹0</span>
-    <span id="symbol" class="symbol">Index</span>
-    <span id="spot-price" class="price">
-        <i class="fa-solid fa-indian-rupee-sign"></i> 
-        <span id="spot-value">0.00</span>
-        <span id="spot-change" style="margin-left: 6px;">(+0.00%)</span>
-    </span>
-</div>
-    </header>
-
-    <div class="dashboard-shell">
-    <section class="top-cockpit" aria-label="Trading cockpit">
-        <div class="cockpit-controls">
+        <div class="header-controls">
             <div class="cockpit-control">
                 <label for="index-select">Index</label>
                 <select id="index-select">
@@ -900,6 +909,19 @@
                 </select>
             </div>
         </div>
+<div class="market-status">
+        <span id="available-margin" class="symbol">Margin: ₹0</span>
+    <span id="symbol" class="symbol">Index</span>
+    <span id="spot-price" class="price">
+        <i class="fa-solid fa-indian-rupee-sign"></i> 
+        <span id="spot-value">0.00</span>
+        <span id="spot-change" style="margin-left: 6px;">(+0.00%)</span>
+    </span>
+</div>
+    </header>
+
+    <div class="dashboard-shell">
+    <section class="top-cockpit" aria-label="Trading cockpit">
         <div class="cockpit-vitals" id="cockpit-vitals">
             <div class="vital-card" id="vital-card-symbol">
                 <div class="vital-label">Symbol</div>
