@@ -122,6 +122,7 @@ function setVitalValue(cardId, valueId, valueText, isAvailable = true) {
 function updateTopCockpit(json, atmStrike = null) {
     const symbol = json.symbol || currentSelectedIndex?.toUpperCase() || '--';
     const spot = isValidNumber(Number(json.spot_price)) ? `₹${formatIndianNumber(Number(json.spot_price))}` : '--';
+    const synthFutNum = isValidNumber(Number(json.future_price)) ? Number(json.future_price) : null;
     const priceNum = isValidNumber(Number(json.strangle_credit)) ? Number(json.strangle_credit) : null;
     if (isValidNumber(priceNum)) {
         observedStraddleLow = observedStraddleLow === null ? priceNum : Math.min(observedStraddleLow, priceNum);
@@ -133,6 +134,7 @@ function updateTopCockpit(json, atmStrike = null) {
 
     setVitalValue('vital-card-symbol', 'vital-symbol', symbol, true);
     setVitalValue('vital-card-spot', 'vital-spot', spot, spot !== '--');
+    setVitalValue('vital-card-synth', 'vital-synth', synthFutNum !== null ? `₹${formatIndianNumber(synthFutNum)}` : '--', synthFutNum !== null);
     setVitalValue('vital-card-atm', 'vital-atm', atmStrike !== null ? String(atmStrike) : '--', atmStrike !== null);
     setVitalValue('vital-card-price', 'vital-price', priceNum !== null ? `₹${formatIndianNumber(priceNum)}` : '--', priceNum !== null);
     setVitalValue('vital-card-low', 'vital-low', lowNum !== null ? `₹${formatIndianNumber(lowNum)}` : '--', lowNum !== null);
@@ -556,10 +558,20 @@ function updatePnLDisplay(json, netPnl, straddlePrice) {
 
 // Update the chart options for better real-time visualization
 function renderPnlChart() {
+    const chartContainer = document.querySelector('#pnl-chart');
+    if (!chartContainer) return;
+
+    chartContainer.innerHTML = '';
+    const containerHeight = chartContainer.clientHeight || 380;
+
     const options = {
         chart: {
             type: 'line',
-            height: 520,
+            height: containerHeight,
+            sparkline: { enabled: false },
+            parentHeightOffset: 0,
+            offsetY: 0,
+            redrawOnParentResize: true,
             zoom: { enabled: true, type: 'x', autoScaleYaxis: true },
             animations: {
                 enabled: true,
@@ -622,8 +634,10 @@ function renderPnlChart() {
                 title: { text: 'Straddle Price (₹)', style: { color: '#21c55d' } },
                 labels: {
                     style: { colors: '#8fa2c1' },
-                    formatter: val => val.toFixed(2)
-                }
+                    formatter: val => val != null ? val.toFixed(2) : ''
+                },
+                tickAmount: 6,
+                forceNiceScale: true
             },
             {
                 seriesName: 'Net P&L',
@@ -631,13 +645,26 @@ function renderPnlChart() {
                 title: { text: 'Net P&L (₹)', style: { color: '#1f8bff' } },
                 labels: {
                     style: { colors: '#8fa2c1' },
-                    formatter: val => val.toFixed(2)
-                }
+                    formatter: val => val != null ? val.toFixed(2) : ''
+                },
+                tickAmount: 6,
+                forceNiceScale: true
             }
         ],
+        plotOptions: {
+            line: {
+                isSlopeChart: false
+            }
+        },
         grid: {
             borderColor: '#223049',
-            strokeDashArray: 3
+            strokeDashArray: 3,
+            padding: {
+                top: 0,
+                right: 16,
+                bottom: 0,
+                left: 8
+            }
         },
         tooltip: {
             theme: 'dark',
@@ -654,8 +681,6 @@ function renderPnlChart() {
         }
     };
 
-    const chartContainer = document.querySelector('#pnl-chart');
-    chartContainer.innerHTML = '';
     const chart = new ApexCharts(chartContainer, options);
     chart.render();
     pnlChart = chart;
@@ -886,11 +911,11 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     initializePanelSplitter();
     initializeCockpitControls();
-});
 
-// Update the interval calls
-setInterval(fetchOptionData, POLLING_INTERVAL);
-fetchOptionData();
-setInterval(fetchPnl, POLLING_INTERVAL);
-initializeChart();
-fetchPnl();
+    initializeChart();
+    setTimeout(() => { if (pnlChart) pnlChart.updateOptions({}); }, 150);
+    fetchOptionData();
+    fetchPnl();
+    setInterval(fetchOptionData, POLLING_INTERVAL);
+    setInterval(fetchPnl, POLLING_INTERVAL);
+});

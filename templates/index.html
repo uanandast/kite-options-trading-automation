@@ -45,7 +45,7 @@
             --put-header: rgba(33, 197, 93, 0.12);
 
             /* Split layout variables */
-            --live-panel-size: 64%;
+            --live-panel-size: 70%;
             --main-panel-gap: 14px;
         }
 
@@ -251,13 +251,16 @@
             transition: transform 0.3s ease, box-shadow 0.3s ease;
         }
         #live-pnl-card {
-            min-height: 640px;
             flex: 0 0 var(--live-panel-size);
-            overflow: auto;
+            height: clamp(580px, 70dvh, 820px);
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            overflow: hidden;
         }
         #strategy-card {
-            min-height: 560px;
             flex: 1 1 auto;
+            height: clamp(580px, 70dvh, 820px);
             overflow: auto;
         }
         .panel-splitter {
@@ -304,15 +307,31 @@
 
         /* Left Panel: P&L Chart */
         #pnl-chart {
-            flex-grow: 1;
-            min-height: 460px;
+            flex: 1 1 0; 
+            min-height: 320px;
+            height: 100%;
             width: 100%;
+            max-width: 100%;
+            overflow: visible;
+            border-radius: 12px;
+            position: relative;
+            z-index: 1;
+            
+        }
+        #pnl-chart .apexcharts-canvas,
+        #pnl-chart .apexcharts-svg {
+            width: 100% !important;
+            max-width: 100% !important;
+            height: 100% !important;
         }
         .chart-controls {
             display: flex;
+            flex-wrap: wrap;
             gap: 12px;
-            justify-content: center;
-            margin-top: 20px;
+            justify-content: flex-start;
+            margin-top: 0;
+            position: relative;
+            z-index: 2;
         }
         .btn {
             display: inline-flex;
@@ -671,6 +690,63 @@
             .option-chain-container {
                 padding: 20px;
             }
+            #pnl-chart {
+                min-height: 0;
+                height: 100%;
+            }
+        }
+        @media (max-height: 900px) and (min-width: 1024px) {
+            .main-header {
+                padding: 12px 28px;
+            }
+            .main-header h1 {
+                font-size: 1.2rem;
+            }
+            .market-status {
+                gap: 14px;
+                font-size: 0.88rem;
+            }
+            .top-cockpit {
+                margin-top: 12px;
+                padding: 12px;
+            }
+            .cockpit-controls {
+                margin-bottom: 8px;
+            }
+            .cockpit-vitals {
+                gap: 8px;
+            }
+            .vital-card {
+                padding: 8px 10px;
+            }
+            .vital-label {
+                font-size: 0.68rem;
+            }
+            .vital-value {
+                font-size: 1.02rem;
+            }
+            .main-content {
+                padding: 14px 0;
+            }
+            .card {
+                padding: 16px;
+            }
+            #live-pnl-card,
+            #strategy-card {
+                height: clamp(520px, 68dvh, 740px);
+            }
+            #pnl-chart {
+                min-height: 260px;
+                height: 100%;
+            }
+            .card-title {
+                margin-bottom: 14px;
+                font-size: 1rem;
+            }
+            .chart-controls .btn {
+                padding: 10px 14px;
+                font-size: 0.82rem;
+            }
         }
         @media (max-width: 1200px) {
             .main-content {
@@ -679,6 +755,7 @@
             #live-pnl-card,
             #strategy-card {
                 flex: 1 1 auto;
+                height: auto;
             }
             .panel-splitter {
                 display: none;
@@ -729,6 +806,13 @@
             .card {
                 padding: 20px;
             }
+            .chart-controls {
+                justify-content: center;
+            }
+            #pnl-chart {
+                min-height: 240px;
+                height: 240px;
+            }
             #option-chain-table {
                 overflow-x: auto;
             }
@@ -739,6 +823,44 @@
             }
             .metrics-row {
                 grid-template-columns: 1fr;
+            }
+        }
+        @media (max-width: 1440px), (max-height: 900px) {
+            .main-header {
+                padding: 10px 24px;
+            }
+            .main-header h1 {
+                font-size: 1.1rem;
+            }
+            .dashboard-shell {
+                padding: 0 16px;
+            }
+            .top-cockpit {
+                margin-top: 8px;
+                padding: 10px 12px;
+            }
+            .vital-card {
+                padding: 6px 10px;
+            }
+            .vital-value {
+                font-size: 0.95rem;
+            }
+            #live-pnl-card,
+            #strategy-card {
+                height: clamp(420px, 70dvh, 820px);
+            }
+            .card {
+                padding: 14px;
+            }
+            .main-content {
+                padding: 10px 0;
+            }
+            .card-title {
+                margin: 0 0 10px 0;
+            }
+            .btn {
+                padding: 7px 12px;
+                font-size: 0.8rem;
             }
         }
     </style>
@@ -787,6 +909,10 @@
                 <div class="vital-label">Spot</div>
                 <div class="vital-value" id="vital-spot">--</div>
             </div>
+            <div class="vital-card" id="vital-card-synth">
+                <div class="vital-label">Synth Fut</div>
+                <div class="vital-value" id="vital-synth">--</div>
+            </div>
             <div class="vital-card" id="vital-card-atm">
                 <div class="vital-label">ATM Strike</div>
                 <div class="vital-value" id="vital-atm">--</div>
@@ -813,12 +939,12 @@
     <main class="main-content">
         <div id="live-pnl-card" class="card">
             <h3 class="card-title"><i class="fa-solid fa-wave-square"></i> Live P&L</h3>
-            <div id="pnl-chart"></div>
             <div class="chart-controls">
                 <button id="manual-exit-btn" class="btn btn-danger"><i class="fa-solid fa-circle-stop"></i> Exit Positions</button>
                 <button id="manual-sl-btn" class="btn btn-warning"><i class="fa-solid fa-shield-halved"></i> Place SL Orders</button>
                 <button id="cancel-sl-btn" class="btn btn-secondary"><i class="fa-solid fa-ban"></i> Cancel SL Orders</button>
             </div>
+            <div id="pnl-chart"></div>
         </div>
 
         <div id="main-splitter" class="panel-splitter" role="separator" aria-label="Resize Live PnL panel" aria-orientation="vertical"></div>
