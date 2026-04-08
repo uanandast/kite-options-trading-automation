@@ -351,7 +351,7 @@ def _open_option_positions_snapshot():
         p for p in positions
         if p.get("quantity", 0) != 0
         and str(p.get("tradingsymbol", "")).upper().endswith(("CE", "PE"))
-        and p.get("exchange") in ("NFO", "BFO")
+        and p.get("exchange") in ("NFO", "BFO", "MCX")
     ]
 
 
@@ -775,7 +775,7 @@ def calculate_pnl(positions):
         Current_pos_credit = 0
 
         # Filter option symbols for batch LTP fetch
-        option_positions = [pos for pos in positions if pos['tradingsymbol'].strip().upper().endswith(("CE", "PE")) and pos['exchange'] in ('BFO','NFO')]
+        option_positions = [pos for pos in positions if pos['tradingsymbol'].strip().upper().endswith(("CE", "PE")) and pos['exchange'] in ('BFO','NFO','MCX')]
         symbols = [f"{pos['exchange']}:{pos['tradingsymbol']}" for pos in option_positions]
   
         

@@ -187,12 +187,12 @@ def update_iron_condor_data():
 
             latest_iron_condor_data = {
                 'legs': result,
-                'net_delta': round(net_delta, 4) if net_delta is not None else None,
+                'net_delta': round(net_delta, 4) if net_delta is not None else None, # From the Recomendation position
                 'chain': options_data,
                 'strangle_credit': strangle_credit,
                 'future_price': future_price,
                 'skew': Skew,
-                'delta':delta,
+                'delta':delta, # from current position
                 'spot_price': spot_price
 
             }
@@ -204,7 +204,7 @@ def update_iron_condor_data():
 
 @app.route('/')
 def index():
-    return render_template('index.html')
+    return render_template('index_r.html')
 
 @app.route('/option_data')
 def iron_condor_data():
