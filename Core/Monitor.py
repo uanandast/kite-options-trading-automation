@@ -367,44 +367,39 @@ def shift_selected_legs(selected_legs, shift_steps):
         raise ValueError("Shift cannot be 0")
 
     open_positions = _open_option_positions_snapshot()
-
-    # Cancel all open SL orders once before rolling legs to free margin headroom.
-    all_sl_cancel_result = cancel_all_sl_orders(fast=True)
     results = []
-    for leg in selected_legs:
+
+    def _shift_single_leg(leg):
         symbol = str(leg.get("tradingsymbol", "")).strip()
         exchange = str(leg.get("exchange", "")).strip().upper()
         if not symbol:
-            results.append({
+            return {
                 "status": "failed",
                 "old_symbol": "",
                 "new_symbol": None,
                 "error": "Missing tradingsymbol",
-            })
-            continue
+            }
 
         pos = _resolve_open_position(open_positions, symbol, exchange=exchange)
         if pos is None:
-            results.append({
+            return {
                 "status": "failed",
                 "old_symbol": symbol,
                 "new_symbol": None,
                 "error": "Position not found or already closed",
-            })
-            continue
+            }
 
         pos_exchange = pos.get("exchange")
         pos_symbol = pos.get("tradingsymbol")
         pos_qty = int(pos.get("quantity", 0))
         opt_type = _extract_opt_type(pos)
         if opt_type is None:
-            results.append({
+            return {
                 "status": "failed",
                 "old_symbol": pos_symbol,
                 "new_symbol": None,
                 "error": "Not an option leg",
-            })
-            continue
+            }
 
         try:
             instruments = _load_instruments(pos_exchange)
@@ -440,9 +435,8 @@ def shift_selected_legs(selected_legs, shift_steps):
                 raise RuntimeError(f"No target symbol for strike {int(target_strike)} {opt_type} same expiry")
 
             is_short = pos_qty < 0
-            sl_cancel_result = {"requested": 0, "cancelled": 0, "errors": 0}
 
-            exit_order_ids = exit_position(pos)
+            exit_order_ids = exit_position(pos, quantity=abs(pos_qty))
             if not exit_order_ids:
                 raise RuntimeError("Square off failed")
 
@@ -467,7 +461,7 @@ def shift_selected_legs(selected_legs, shift_steps):
 
             sl_place_result = {"placed": 0, "error": None}
 
-            results.append({
+            return {
                 "status": "success",
                 "old_symbol": pos_symbol,
                 "new_symbol": target_inst["tradingsymbol"],
@@ -476,20 +470,28 @@ def shift_selected_legs(selected_legs, shift_steps):
                 "entry_quantity": entry_qty,
                 "entry_side": entry_side,
                 "target_strike": target_strike,
-                "sl_cancelled": sl_cancel_result.get("cancelled", 0),
-                "sl_cancel_errors": sl_cancel_result.get("errors", 0),
                 "sl_placed": sl_place_result["placed"],
                 "sl_error": sl_place_result["error"],
                 "entry_order_ids": entry_order_ids,
-            })
+            }
         except Exception as e:
-            results.append({
+            return {
                 "status": "failed",
                 "old_symbol": pos_symbol,
                 "new_symbol": None,
                 "exchange": pos_exchange,
                 "error": str(e),
-            })
+            }
+
+    if len(selected_legs) > 1:
+        max_workers = min(4, len(selected_legs))
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = [executor.submit(_shift_single_leg, leg) for leg in selected_legs]
+            for future in as_completed(futures):
+                results.append(future.result())
+    else:
+        for leg in selected_legs:
+            results.append(_shift_single_leg(leg))
 
     succeeded = sum(1 for r in results if r.get("status") == "success")
     failed = sum(1 for r in results if r.get("status") == "failed")
@@ -497,7 +499,6 @@ def shift_selected_legs(selected_legs, shift_steps):
         "requested": len(selected_legs),
         "succeeded": succeeded,
         "failed": failed,
-        "all_sl_cancel": all_sl_cancel_result,
         "results": results,
     }
 
