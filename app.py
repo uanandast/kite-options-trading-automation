@@ -48,6 +48,10 @@ manual_stoploss_lock = Lock()
 manual_stoploss_in_progress = False
 manual_cancel_sl_lock = Lock()
 manual_cancel_sl_in_progress = False
+manual_shift_lock = Lock()
+manual_shift_in_progress = False
+manual_selected_exit_lock = Lock()
+manual_selected_exit_in_progress = False
 
 kite_monitor_final = None
 get_current_iron_condor = None
@@ -298,6 +302,30 @@ def _format_exit_message(result):
     return msg
 
 
+def _format_shift_message(result):
+    requested = result.get("requested", 0)
+    succeeded = result.get("succeeded", 0)
+    failed = result.get("failed", 0)
+    if requested == 0:
+        return "No legs selected for shift"
+    msg = f"Shifted {succeeded}/{requested} legs"
+    if failed > 0:
+        msg += f" ({failed} failed)"
+    return msg
+
+
+def _format_selected_exit_message(result):
+    requested = result.get("requested", 0)
+    succeeded = result.get("succeeded", 0)
+    failed = result.get("failed", 0)
+    if requested == 0:
+        return "No legs selected for exit"
+    msg = f"Exited {succeeded}/{requested} selected legs"
+    if failed > 0:
+        msg += f" ({failed} failed)"
+    return msg
+
+
 @app.route('/manual_exit', methods=['POST'])
 def manual_exit():
     global manual_exit_in_progress
@@ -361,6 +389,131 @@ def manual_cancel_sl():
         with manual_cancel_sl_lock:
             manual_cancel_sl_in_progress = False
 
+
+@app.route('/open_option_positions')
+def open_option_positions():
+    try:
+        if kite_monitor_final is None:
+            return jsonify({"message": "Kite runtime not initialized"}), 503
+        positions = kite_monitor_final.get_open_option_positions()
+        return jsonify({"positions": positions}), 200
+    except Exception as e:
+        print(f"❌ Error fetching open option positions: {str(e)}")
+        return jsonify({"message": f"Failed to fetch open option positions: {str(e)}"}), 500
+
+
+@app.route('/shift_legs', methods=['POST'])
+def shift_legs():
+    global manual_shift_in_progress
+    with manual_shift_lock:
+        if manual_shift_in_progress:
+            return jsonify({"message": "Leg shift is already in progress"}), 409
+        manual_shift_in_progress = True
+
+    try:
+        if kite_monitor_final is None:
+            return jsonify({"message": "Kite runtime not initialized"}), 503
+
+        payload = request.get_json(silent=True) or {}
+        legs = payload.get("legs")
+        shift = payload.get("shift")
+
+        if not isinstance(legs, list) or len(legs) == 0:
+            return jsonify({"message": "Missing legs selection"}), 400
+        try:
+            shift_value = int(shift)
+        except (TypeError, ValueError):
+            return jsonify({"message": "Shift must be an integer"}), 400
+        if shift_value == 0:
+            return jsonify({"message": "Shift cannot be 0"}), 400
+
+        normalized_legs = []
+        for leg in legs:
+            if isinstance(leg, str):
+                symbol = leg.strip()
+                if symbol:
+                    normalized_legs.append({"tradingsymbol": symbol})
+                continue
+            if isinstance(leg, dict):
+                symbol = str(leg.get("tradingsymbol", "")).strip()
+                if not symbol:
+                    continue
+                normalized_legs.append({
+                    "tradingsymbol": symbol,
+                    "exchange": str(leg.get("exchange", "")).strip().upper(),
+                    "product": leg.get("product"),
+                })
+                if leg.get("new_qty") is not None:
+                    try:
+                        normalized_legs[-1]["new_qty"] = int(leg.get("new_qty"))
+                    except (TypeError, ValueError):
+                        return jsonify({"message": f"Invalid new_qty for {symbol}"}), 400
+
+        if not normalized_legs:
+            return jsonify({"message": "No valid legs supplied"}), 400
+
+        result = kite_monitor_final.shift_selected_legs(normalized_legs, shift_value)
+        return jsonify({
+            "message": _format_shift_message(result),
+            "details": result
+        }), 200
+    except Exception as e:
+        print(f"❌ Error shifting legs: {str(e)}")
+        return jsonify({"message": f"Leg shift failed: {str(e)}"}), 500
+    finally:
+        with manual_shift_lock:
+            manual_shift_in_progress = False
+
+
+@app.route('/exit_selected_legs', methods=['POST'])
+def exit_selected_legs():
+    global manual_selected_exit_in_progress
+    with manual_selected_exit_lock:
+        if manual_selected_exit_in_progress:
+            return jsonify({"message": "Selected legs exit already in progress"}), 409
+        manual_selected_exit_in_progress = True
+
+    try:
+        if kite_monitor_final is None:
+            return jsonify({"message": "Kite runtime not initialized"}), 503
+
+        payload = request.get_json(silent=True) or {}
+        legs = payload.get("legs")
+        if not isinstance(legs, list) or len(legs) == 0:
+            return jsonify({"message": "Missing legs selection"}), 400
+
+        normalized_legs = []
+        for leg in legs:
+            if isinstance(leg, str):
+                symbol = leg.strip()
+                if symbol:
+                    normalized_legs.append({"tradingsymbol": symbol})
+                continue
+            if isinstance(leg, dict):
+                symbol = str(leg.get("tradingsymbol", "")).strip()
+                if not symbol:
+                    continue
+                normalized_legs.append({
+                    "tradingsymbol": symbol,
+                    "exchange": str(leg.get("exchange", "")).strip().upper(),
+                    "product": leg.get("product"),
+                })
+
+        if not normalized_legs:
+            return jsonify({"message": "No valid legs supplied"}), 400
+
+        result = kite_monitor_final.exit_selected_legs(normalized_legs)
+        return jsonify({
+            "message": _format_selected_exit_message(result),
+            "details": result
+        }), 200
+    except Exception as e:
+        print(f"❌ Error exiting selected legs: {str(e)}")
+        return jsonify({"message": f"Exit selected legs failed: {str(e)}"}), 500
+    finally:
+        with manual_selected_exit_lock:
+            manual_selected_exit_in_progress = False
+
 # Run the monitoring loop in the background
 if __name__ == '__main__':
     try:
@@ -378,4 +531,4 @@ if __name__ == '__main__':
     thread1.start()
     thread2 = Thread(target=monitor_spreads_loop, daemon=True)
     thread2.start()
-    app.run(debug=False, port=5000)
+    app.run(debug=True, port=5000)

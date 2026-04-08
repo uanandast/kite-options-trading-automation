@@ -9,9 +9,15 @@ let lastKnownStraddlePrice = 0;
 let pendingChartUpdate = false;
 let lastChartUpdate = Date.now();
 let currentSelectedIndex = 'nifty';
+let openOptionPositions = [];
 const SPLITTER_STORAGE_KEY = 'dashboardSplitterWidth_v1';
 let observedStraddleLow = null;
 let observedStraddleHigh = null;
+const STRIKE_STEP_BY_INDEX = {
+    nifty: 50,
+    sensex: 100,
+    banknifty: 100
+};
 
 function isValidNumber(value) {
     return typeof value === 'number' && Number.isFinite(value);
@@ -22,6 +28,15 @@ function formatChange(val) {
     if (val > 0) return `<span class="positive">+${val}</span>`;
     if (val < 0) return `<span class="negative">${val}</span>`;
     return `<span class="neutral">${val}</span>`;
+}
+
+function escapeHtml(value) {
+    return String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
 }
 
 function renderRecommendation(legs, net_delta, strangle_credit, future_price, skew) {
@@ -169,7 +184,7 @@ function initializePanelSplitter() {
     if (!mainContent || !splitter) return;
 
     const savedWidth = Number(localStorage.getItem(SPLITTER_STORAGE_KEY));
-    if (isValidNumber(savedWidth) && savedWidth >= 35 && savedWidth <= 80) {
+    if (isValidNumber(savedWidth) && savedWidth >= 50 && savedWidth <= 80) {
         document.documentElement.style.setProperty('--live-panel-size', `${savedWidth}%`);
     }
 
@@ -178,7 +193,7 @@ function initializePanelSplitter() {
     const onMove = (clientX) => {
         const rect = mainContent.getBoundingClientRect();
         const rawPercent = ((clientX - rect.left) / rect.width) * 100;
-        const clampedPercent = Math.min(80, Math.max(35, rawPercent));
+        const clampedPercent = Math.min(80, Math.max(50, rawPercent));
         document.documentElement.style.setProperty('--live-panel-size', `${clampedPercent}%`);
         localStorage.setItem(SPLITTER_STORAGE_KEY, String(clampedPercent));
     };
@@ -230,7 +245,6 @@ async function fetchOptionData() {
 
         console.log(`Fetched option data at ${new Date().toISOString()}:`, json);
 
-        const chain = json.chain || [];
         straddlePriceFromSocket = json.strangle_credit ?? null;
         future_price = json.future_price ?? null;
         skew = json.skew ?? null;
@@ -252,80 +266,11 @@ async function fetchOptionData() {
             json.skew
         );
 
-        const strikes = {};
-        chain.forEach(row => {
-            if (!strikes[row.strike]) strikes[row.strike] = {};
-            strikes[row.strike][row.type] = row;
-        });
-
-        let html = `
-            <table>
-                <thead>
-                    <tr>
-                        <th colspan="6" class="call-header">CALLS</th>
-                        <th class="strike">Strike</th>
-                        <th colspan="6" class="put-header">PUTS</th>
-                    </tr>
-                    <tr>
-                        <th>Delta</th>
-                        <th>OI Chg%</th>
-                        <th>OI-lakh</th>
-                        <th>OI</th>
-                        <th>LTP(chg%)</th>
-                        <th>IV(chg)</th>
-                        <th class="strike"></th>
-                        <th>IV(chg)</th>
-                        <th>LTP(chg%)</th>
-                        <th>OI</th>
-                        <th>OI-lakh</th>
-                        <th>OI Chg%</th>
-                        <th>Delta</th>
-                    </tr>
-                </thead>
-                <tbody>
-        `;
-        const sortedStrikes = Object.keys(strikes).map(Number).sort((a, b) => a - b);
-        let minDiff = Infinity;
-        let atmStrike = null;
-        if (typeof spot_price === 'number') {
-            sortedStrikes.forEach(strike => {
-                const diff = Math.abs(strike - spot_price);
-                if (diff < minDiff) {
-                    minDiff = diff;
-                    atmStrike = strike;
-                }
-            });
-        }
+        const strikeStep = STRIKE_STEP_BY_INDEX[currentSelectedIndex] || null;
+        const atmStrike = (strikeStep && typeof spot_price === 'number')
+            ? Math.round(spot_price / strikeStep) * strikeStep
+            : null;
         updateTopCockpit(json, atmStrike);
-
-        sortedStrikes.forEach(strike => {
-            const ce = strikes[strike]['CE'] || {};
-            const pe = strikes[strike]['PE'] || {};
-            const isAtm = (strike === atmStrike);
-            const rowClass = isAtm ? 'atm-row' : '';
-            const strikeClass = isAtm ? 'strike atm-strike' : 'strike';
-            
-            html += `
-                <tr class="${rowClass}">
-                    <td class="calls small">${ce.delta !== undefined ? ce.delta.toFixed(2) : ''}</td>
-                    <td class="calls small">${ce.oi_chg_pct !== undefined ? formatChange(ce.oi_chg_pct) : ''}</td>
-                    <td class="calls small">${ce.oi_lakh !== undefined ? ce.oi_lakh : ''}</td>
-                    <td class="calls small">${ce.oi !== undefined ? (ce.oi / 100000).toFixed(2) + ' L' : ''}</td>
-                    <td class="calls small">${ce.ltp !== undefined ? `₹${ce.ltp} ${ce.ltp_chg_pct !== undefined ? '(' + formatChange(ce.ltp_chg_pct) + '%)' : ''}` : ''}</td>
-                    <td class="calls small">${ce.iv !== undefined ? ce.iv.toFixed(2) : ''} ${ce.iv_chg !== undefined ? '(' + formatChange(ce.iv_chg) + ')' : ''}</td>
-                    <td class="${strikeClass}">${strike}</td>
-                    <td class="puts small">${pe.iv !== undefined ? pe.iv.toFixed(2) : ''} ${pe.iv_chg !== undefined ? '(' + formatChange(pe.iv_chg) + ')' : ''}</td>
-                    <td class="puts small">${pe.ltp !== undefined ? `₹${pe.ltp} ${pe.ltp_chg_pct !== undefined ? '(' + formatChange(pe.ltp_chg_pct) + '%)' : ''}` : ''}</td>
-                    <td class="puts small">${pe.oi !== undefined ? (pe.oi / 100000).toFixed(2) + ' L' : ''}</td>
-                    <td class="puts small">${pe.oi_lakh !== undefined ? pe.oi_lakh : ''}</td>
-                    <td class="puts small">${pe.oi_chg_pct !== undefined ? formatChange(pe.oi_chg_pct) : ''}</td>
-                    <td class="puts small">${pe.delta !== undefined ? pe.delta.toFixed(2) : ''}</td>
-                </tr>
-            `;
-        });
-
-        html += '</tbody></table>';
-        document.getElementById("option-chain-table").innerHTML = html;
 
     } catch (error) {
         console.error('Error fetching option data:', error);
@@ -561,13 +506,16 @@ function renderPnlChart() {
     const chartContainer = document.querySelector('#pnl-chart');
     if (!chartContainer) return;
 
+    if (chartContainer._resizeObserver) {
+        chartContainer._resizeObserver.disconnect();
+        chartContainer._resizeObserver = null;
+    }
     chartContainer.innerHTML = '';
-    const containerHeight = chartContainer.clientHeight || 380;
 
     const options = {
         chart: {
             type: 'line',
-            height: containerHeight,
+            height: '100%',
             sparkline: { enabled: false },
             parentHeightOffset: 0,
             offsetY: 0,
@@ -682,7 +630,16 @@ function renderPnlChart() {
     };
 
     const chart = new ApexCharts(chartContainer, options);
-    chart.render();
+    chart.render().then(() => {
+        requestAnimationFrame(() => chart.updateOptions({}));
+        if (typeof ResizeObserver !== 'undefined') {
+            const resizeObserver = new ResizeObserver(() => {
+                requestAnimationFrame(() => chart.updateOptions({}));
+            });
+            resizeObserver.observe(chartContainer);
+            chartContainer._resizeObserver = resizeObserver;
+        }
+    });
     pnlChart = chart;
 }
 
@@ -836,6 +793,236 @@ async function triggerManualCancelSL() {
     }
 }
 
+function renderOpenOptionPositions() {
+    const container = document.getElementById('shift-legs-list');
+    if (!container) return;
+
+    // Preserve checked state across re-renders
+    const prevState = {};
+    container.querySelectorAll('.shift-leg-item').forEach(item => {
+        const cb = item.querySelector('input[type="checkbox"]');
+        if (cb) prevState[cb.value] = {
+            checked: cb.checked
+        };
+    });
+
+    if (!Array.isArray(openOptionPositions) || openOptionPositions.length === 0) {
+        container.innerHTML = `<div class="shift-empty">No open option legs found.</div>`;
+        return;
+    }
+
+    const rows = openOptionPositions.map((leg) => {
+        const key = `${leg.exchange}::${leg.tradingsymbol}`;
+        const prev = prevState[key] || {};
+        const checked = prev.checked ? 'checked' : '';
+        const currentQty = Math.abs(Number(leg.quantity || 0));
+        const isShort = String(leg.side || '').toUpperCase() === 'SHORT';
+        const sideClass = isShort ? 'short' : 'long';
+        const sideLabel = isShort ? 'SHORT' : 'LONG';
+
+        return `
+            <div class="shift-leg-item">
+                <input
+                    type="checkbox"
+                    value="${escapeHtml(key)}"
+                    data-symbol="${escapeHtml(leg.tradingsymbol)}"
+                    data-exchange="${escapeHtml(leg.exchange)}"
+                    data-product="${escapeHtml(leg.product || '')}"
+                    data-current-qty="${currentQty}"
+                    ${checked}
+                />
+                <span class="shift-leg-symbol" title="${escapeHtml(leg.tradingsymbol)}">
+                    ${escapeHtml(leg.tradingsymbol)}
+                </span>
+                <span class="shift-leg-side ${sideClass}">${sideLabel}</span>
+                <span class="shift-leg-qty-label">×${currentQty}</span>
+            </div>
+        `;
+    });
+
+    container.innerHTML = rows.join('');
+    container.querySelectorAll('.shift-leg-item').forEach((item) => {
+        item.addEventListener('click', (event) => {
+            if (event.target && event.target.closest('input[type="checkbox"]')) return;
+            const checkbox = item.querySelector('input[type="checkbox"]');
+            if (!checkbox) return;
+            checkbox.checked = !checkbox.checked;
+            checkbox.dispatchEvent(new Event('change', { bubbles: true }));
+        });
+    });
+}
+
+async function fetchOpenOptionPositions() {
+    try {
+        const response = await fetch('/open_option_positions');
+        const payload = await response.json();
+        if (!response.ok) {
+            throw new Error(payload.message || 'Failed to load open positions');
+        }
+        openOptionPositions = Array.isArray(payload.positions) ? payload.positions : [];
+        renderOpenOptionPositions();
+    } catch (error) {
+        console.error('Error loading open option positions:', error);
+        const container = document.getElementById('shift-legs-list');
+        if (container) {
+            container.innerHTML = `<div class="shift-empty">${escapeHtml(error.message || 'Error loading open positions')}</div>`;
+        }
+    }
+}
+
+function getShiftCount() {
+    const countInput = document.getElementById('shift-count-input');
+    if (!countInput) return null;
+    const parsed = Number.parseInt(countInput.value, 10);
+    if (!Number.isInteger(parsed) || parsed <= 0) {
+        return null;
+    }
+    return parsed;
+}
+
+function getSelectedLegsFromList() {
+    const listContainer = document.getElementById('shift-legs-list');
+    if (!listContainer) return [];
+    const checked = Array.from(listContainer.querySelectorAll('input[type="checkbox"]:checked'));
+    return checked.map((el) => ({
+        element: el,
+        tradingsymbol: el.dataset.symbol,
+        exchange: el.dataset.exchange,
+        product: el.dataset.product || undefined,
+        currentQty: Number(el.dataset.currentQty || 0),
+    }));
+}
+
+function getGlobalNewQtyIfEnabled() {
+    const useQtyCheckbox = document.getElementById('shift-use-qty');
+    const qtyInput = document.getElementById('shift-qty-input');
+    if (!useQtyCheckbox || !qtyInput || !useQtyCheckbox.checked) {
+        return null;
+    }
+    const newQty = Number.parseInt(qtyInput.value, 10);
+    if (!Number.isInteger(newQty) || newQty <= 0) {
+        return null;
+    }
+    return newQty;
+}
+
+async function exitSelectedLegs() {
+    const nearBtn = document.getElementById('shift-near-btn');
+    const awayBtn = document.getElementById('shift-away-btn');
+    const exitSelectedBtn = document.getElementById('shift-exit-selected-btn');
+    if (!nearBtn || !awayBtn || !exitSelectedBtn) return;
+    if (nearBtn.disabled || awayBtn.disabled) return;
+
+    const selectedLegs = getSelectedLegsFromList();
+    if (selectedLegs.length === 0) {
+        showToast('Error', 'Select at least one leg to exit', 'error', 2800);
+        return;
+    }
+
+    nearBtn.disabled = true;
+    awayBtn.disabled = true;
+    exitSelectedBtn.disabled = true;
+    try {
+        const response = await fetch('/exit_selected_legs', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                legs: selectedLegs.map((leg) => ({
+                    tradingsymbol: leg.tradingsymbol,
+                    exchange: leg.exchange,
+                    product: leg.product,
+                }))
+            })
+        });
+        const payload = await response.json();
+        if (!response.ok) {
+            throw new Error(payload.message || 'Exit selected legs failed');
+        }
+        showToast('Complete', payload.message || 'Selected legs exited', 'success', 3500);
+        await fetchOpenOptionPositions();
+        await fetchOptionData();
+        await fetchPnl();
+    } catch (error) {
+        console.error('Error exiting selected legs:', error);
+        showToast('Error', error.message || 'Exit selected legs failed', 'error', 3200);
+    } finally {
+        nearBtn.disabled = false;
+        awayBtn.disabled = false;
+        exitSelectedBtn.disabled = false;
+    }
+}
+
+async function triggerShiftLegs(direction) {
+    const nearBtn = document.getElementById('shift-near-btn');
+    const awayBtn = document.getElementById('shift-away-btn');
+    const exitSelectedBtn = document.getElementById('shift-exit-selected-btn');
+    if (!nearBtn || !awayBtn || !exitSelectedBtn) return;
+    if (nearBtn.disabled || awayBtn.disabled) return;
+
+    const selectedLegs = getSelectedLegsFromList();
+    if (selectedLegs.length === 0) {
+        showToast('Error', 'Select at least one leg to shift', 'error', 2800);
+        return;
+    }
+
+    const count = getShiftCount();
+    if (count === null) {
+        showToast('Error', 'Strikes must be a positive integer', 'error', 2800);
+        return;
+    }
+    const globalNewQty = getGlobalNewQtyIfEnabled();
+    const useQtyCheckbox = document.getElementById('shift-use-qty');
+    if (useQtyCheckbox && useQtyCheckbox.checked && globalNewQty === null) {
+        showToast('Error', 'Qty must be a positive integer', 'error', 2800);
+        return;
+    }
+    const shift = direction === 'near' ? -count : count;
+
+    const legs = selectedLegs.map((leg) => ({
+        tradingsymbol: leg.tradingsymbol,
+        exchange: leg.exchange,
+        product: leg.product,
+        ...(globalNewQty !== null && { new_qty: globalNewQty }),
+    }));
+
+    nearBtn.disabled = true;
+    awayBtn.disabled = true;
+    exitSelectedBtn.disabled = true;
+    try {
+        const response = await fetch('/shift_legs', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ legs, shift })
+        });
+        const payload = await response.json();
+        if (!response.ok) {
+            throw new Error(payload.message || 'Leg shift failed');
+        }
+
+        const details = payload.details || {};
+        const failures = Array.isArray(details.results)
+            ? details.results.filter((item) => item.status === 'failed')
+            : [];
+        let message = payload.message || 'Leg shift complete';
+        if (failures.length > 0) {
+            const first = failures[0];
+            message += ` | First error: ${first.old_symbol || 'leg'} - ${first.error || 'unknown error'}`;
+        }
+        showToast('Complete', message, failures.length > 0 ? 'error' : 'success', 4000);
+
+        await fetchOpenOptionPositions();
+        await fetchOptionData();
+        await fetchPnl();
+    } catch (error) {
+        console.error('Error shifting legs:', error);
+        showToast('Error', error.message || 'Error shifting legs', 'error', 3200);
+    } finally {
+        nearBtn.disabled = false;
+        awayBtn.disabled = false;
+        exitSelectedBtn.disabled = false;
+    }
+}
+
 async function loadIndexOptions() {
     const indexSelect = document.getElementById('index-select');
     if (!indexSelect) return;
@@ -904,6 +1091,27 @@ document.addEventListener('DOMContentLoaded', () => {
     if (cancelSlButton) {
         cancelSlButton.addEventListener('click', triggerManualCancelSL);
     }
+    const shiftNearButton = document.getElementById('shift-near-btn');
+    if (shiftNearButton) {
+        shiftNearButton.addEventListener('click', () => triggerShiftLegs('near'));
+    }
+    const shiftAwayButton = document.getElementById('shift-away-btn');
+    if (shiftAwayButton) {
+        shiftAwayButton.addEventListener('click', () => triggerShiftLegs('away'));
+    }
+    const shiftExitSelectedButton = document.getElementById('shift-exit-selected-btn');
+    if (shiftExitSelectedButton) {
+        shiftExitSelectedButton.addEventListener('click', exitSelectedLegs);
+    }
+    const useQtyCheckbox = document.getElementById('shift-use-qty');
+    const shiftQtyInput = document.getElementById('shift-qty-input');
+    if (useQtyCheckbox && shiftQtyInput) {
+        const syncQtyEnabledState = () => {
+            shiftQtyInput.disabled = !useQtyCheckbox.checked;
+        };
+        useQtyCheckbox.addEventListener('change', syncQtyEnabledState);
+        syncQtyEnabledState();
+    }
     const indexSelect = document.getElementById('index-select');
     if (indexSelect) {
         indexSelect.addEventListener('change', handleIndexChange);
@@ -916,6 +1124,8 @@ document.addEventListener('DOMContentLoaded', () => {
     setTimeout(() => { if (pnlChart) pnlChart.updateOptions({}); }, 150);
     fetchOptionData();
     fetchPnl();
+    fetchOpenOptionPositions();
     setInterval(fetchOptionData, POLLING_INTERVAL);
     setInterval(fetchPnl, POLLING_INTERVAL);
+    setInterval(fetchOpenOptionPositions, 5000);
 });

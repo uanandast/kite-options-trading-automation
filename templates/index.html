@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Modern Option Chain Dashboard</title>
+    <title>Modern Delta IV Dashboard</title>
     
     <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/apexcharts"></script>
@@ -45,7 +45,7 @@
             --put-header: rgba(33, 197, 93, 0.12);
 
             /* Split layout variables */
-            --live-panel-size: 70%;
+            --live-panel-size: 50%;
             --main-panel-gap: 14px;
         }
 
@@ -249,6 +249,7 @@
         .main-content {
             display: flex;
             align-items: stretch;
+            height: clamp(580px, 70dvh, 820px);
             gap: var(--main-panel-gap);
             padding: 24px 0;
             margin: 0;
@@ -269,16 +270,44 @@
         }
         #live-pnl-card {
             flex: 0 0 var(--live-panel-size);
-            height: clamp(580px, 70dvh, 820px);
+            height: 100%;
+            min-height: 0;
+            max-height: none;
+            box-sizing: border-box;
             display: flex;
             flex-direction: column;
-            gap: 12px;
+            gap: 0;
             overflow: hidden;
+            padding: 0;
+        }
+        #live-pnl-card .controls-zone {
+            flex: 0 0 auto;
+            padding: 16px 20px 10px 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            overflow: visible;
+        }
+        #live-pnl-card .chart-zone {
+            flex: 1 1 0;
+            min-height: 0;
+            height: 100%;
+            box-sizing: border-box;
+            padding: 0 20px 16px 20px;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
         }
         #strategy-card {
             flex: 1 1 auto;
-            height: clamp(580px, 70dvh, 820px);
+            height: 100%;
+            min-height: 0;
+            max-height: none;
+            box-sizing: border-box;
             overflow: auto;
+        }
+        #main-splitter {
+            align-self: stretch;
         }
         .panel-splitter {
             width: 10px;
@@ -325,20 +354,18 @@
         /* Left Panel: P&L Chart */
         #pnl-chart {
             flex: 1 1 0; 
-            min-height: 320px;
-            height: 100%;
+            min-height: 0;
             width: 100%;
-            max-width: 100%;
-            overflow: visible;
+            overflow: hidden;
             border-radius: 12px;
-            position: relative;
-            z-index: 1;
-            
+        }
+        #live-pnl-card .shift-panel {
+            max-height: none;
+            overflow: visible;
         }
         #pnl-chart .apexcharts-canvas,
-        #pnl-chart .apexcharts-svg {
+        #pnl-chart .apexcharts-canvas > svg {
             width: 100% !important;
-            max-width: 100% !important;
             height: 100% !important;
         }
         .chart-controls {
@@ -349,6 +376,190 @@
             margin-top: 0;
             position: relative;
             z-index: 2;
+        }
+        .shift-panel {
+            width: 100%;
+            margin-top: 10px;
+            padding: 12px;
+            border: 1px solid var(--border-light);
+            border-radius: 10px;
+            background: rgba(0, 0, 0, 0.22);
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        .shift-panel-title {
+            font-size: 0.82rem;
+            text-transform: uppercase;
+            color: var(--text-secondary);
+            letter-spacing: 0.05em;
+            font-weight: 700;
+        }
+        .shift-legs-list {
+            border: 1px solid var(--border-light);
+            border-radius: 8px;
+            padding: 8px;
+            background: rgba(2, 6, 23, 0.45);
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        .shift-leg-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 8px;
+            border-radius: 6px;
+            background: rgba(255,255,255,0.03);
+            border: 1px solid rgba(255,255,255,0.05);
+            font-size: 0.85rem;
+            color: var(--text-primary);
+            cursor: pointer;
+        }
+        .shift-leg-item input[type="checkbox"] {
+            accent-color: var(--accent-primary);
+            flex-shrink: 0;
+        }
+        .shift-leg-symbol {
+            font-weight: 700;
+            flex: 1 1 auto;
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .shift-leg-side {
+            font-size: 0.78rem;
+            font-weight: 700;
+            padding: 2px 6px;
+            border-radius: 4px;
+            flex-shrink: 0;
+        }
+        .shift-leg-side.short {
+            background: rgba(255, 91, 91, 0.15);
+            color: var(--color-negative);
+        }
+        .shift-leg-side.long {
+            background: rgba(33, 197, 93, 0.15);
+            color: var(--color-positive);
+        }
+        .shift-leg-qty-label {
+            font-size: 0.78rem;
+            color: var(--text-secondary);
+            flex-shrink: 0;
+        }
+        .shift-qty-toggle {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 0 2px;
+        }
+        .shift-qty-toggle input[type="checkbox"] {
+            accent-color: var(--accent-primary);
+        }
+        .shift-qty-toggle label {
+            font-size: 0.84rem;
+            color: var(--text-secondary);
+            font-weight: 600;
+        }
+        .shift-qty-input {
+            width: 72px;
+            height: 36px;
+            border: 1px solid var(--border-light);
+            border-radius: 6px;
+            background: rgba(2, 6, 23, 0.55);
+            color: var(--text-primary);
+            font-size: 0.88rem;
+            font-weight: 700;
+            text-align: center;
+            font-variant-numeric: tabular-nums;
+            outline: none;
+            padding: 0 6px;
+            flex-shrink: 0;
+            transition: border-color 0.2s;
+        }
+        .shift-qty-input:focus {
+            border-color: var(--accent-primary);
+            box-shadow: 0 0 0 2px var(--accent-glow);
+        }
+        .shift-qty-input:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        .shift-empty {
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+            margin: 2px 0;
+        }
+        .shift-controls {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+        .shift-controls label {
+            font-size: 0.84rem;
+            color: var(--text-secondary);
+            font-weight: 600;
+        }
+        .shift-count-input {
+            width: 96px;
+            height: 38px;
+            border: 1px solid var(--border-light);
+            border-radius: 8px;
+            background: rgba(2, 6, 23, 0.55);
+            color: var(--text-primary);
+            font-size: 0.95rem;
+            font-weight: 700;
+            text-align: center;
+            font-variant-numeric: tabular-nums;
+            outline: none;
+            padding: 0 8px;
+        }
+        .shift-count-input:focus {
+            border-color: var(--accent-primary);
+            box-shadow: 0 0 0 2px var(--accent-glow);
+        }
+        .shift-action-btn {
+            min-width: 148px;
+            height: 38px;
+            border: 1px solid var(--border-light);
+            border-radius: 8px;
+            font-size: 0.82rem;
+            font-weight: 700;
+            color: #fff;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+        .shift-action-btn:hover {
+            transform: translateY(-1px);
+        }
+        .shift-action-btn:active {
+            transform: translateY(0);
+        }
+        .shift-action-btn.near {
+            background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+            border-color: rgba(245, 158, 11, 0.35);
+            box-shadow: 0 4px 12px rgba(217, 119, 6, 0.25);
+        }
+        .shift-action-btn.near:hover:not(:disabled) {
+            box-shadow: 0 6px 16px rgba(217, 119, 6, 0.4);
+        }
+        .shift-action-btn.away {
+            background: linear-gradient(135deg, #16a34a 0%, #15803d 100%);
+            border-color: rgba(33, 197, 93, 0.35);
+            box-shadow: 0 4px 12px rgba(21, 128, 61, 0.28);
+        }
+        .shift-action-btn.away:hover:not(:disabled) {
+            box-shadow: 0 6px 16px rgba(21, 128, 61, 0.42);
+        }
+        .shift-action-btn.exit {
+            background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+            border-color: rgba(239, 68, 68, 0.4);
+            box-shadow: 0 4px 12px rgba(220, 38, 38, 0.24);
+        }
+        .shift-action-btn.exit:hover:not(:disabled) {
+            box-shadow: 0 6px 16px rgba(220, 38, 38, 0.42);
         }
         .btn {
             display: inline-flex;
@@ -572,80 +783,6 @@
             align-items: center;
         }
 
-        /* Option Chain Container */
-        .option-chain-container {
-            padding: 32px 40px;
-            margin: 0 auto;
-            max-width: 1800px;
-            background: transparent;
-            box-shadow: none;
-            border: none;
-        }
-        .option-chain-container .card-title {
-            justify-content: center;
-            font-size: 1.4rem;
-            margin-bottom: 32px;
-            position: relative;
-            display: inline-flex;
-            left: 50%;
-            transform: translateX(-50%);
-        }
-        .option-chain-container .card-title::after {
-            content: '';
-            position: absolute;
-            bottom: -10px;
-            left: 20%;
-            right: 20%;
-            height: 2px;
-            background: linear-gradient(90deg, transparent, var(--accent-primary), transparent);
-        }
-
-        #option-chain-table {
-            border-radius: 16px;
-            overflow: auto;
-            max-height: 800px; /* Optional constraints for sticky header */
-            border: 1px solid var(--border-light);
-            background: var(--bg-card);
-            backdrop-filter: blur(8px);
-            -webkit-backdrop-filter: blur(8px);
-            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
-        }
-
-        #option-chain-table table {
-            width: 100%;
-            border-collapse: separate;
-            border-spacing: 0;
-            font-size: 0.85rem;
-        }
-
-        #option-chain-table th, #option-chain-table td {
-            padding: 12px 10px;
-            text-align: center;
-            border-bottom: 1px solid rgba(255, 255, 255, 0.03);
-            border-right: 1px solid rgba(255, 255, 255, 0.03);
-            font-variant-numeric: tabular-nums;
-        }
-
-        #option-chain-table tr:last-child td {
-            border-bottom: none;
-        }
-        #option-chain-table th:last-child, #option-chain-table td:last-child {
-            border-right: none;
-        }
-
-        #option-chain-table th {
-            background-color: rgba(11, 18, 32, 0.95);
-            color: var(--text-secondary);
-            font-weight: 600;
-            position: sticky;
-            top: 0;
-            backdrop-filter: blur(10px);
-            z-index: 10;
-        }
-
-        #option-chain-table tr:hover {
-            background-color: rgba(255, 255, 255, 0.03);
-        }
 
         /* Specific Table Cell Styling */
         .call-header { 
@@ -704,13 +841,6 @@
             .dashboard-shell {
                 padding: 0 20px;
             }
-            .option-chain-container {
-                padding: 20px;
-            }
-            #pnl-chart {
-                min-height: 0;
-                height: 100%;
-            }
         }
         @media (max-height: 900px) and (min-width: 1024px) {
             .main-header {
@@ -748,14 +878,6 @@
             .card {
                 padding: 16px;
             }
-            #live-pnl-card,
-            #strategy-card {
-                height: clamp(520px, 68dvh, 740px);
-            }
-            #pnl-chart {
-                min-height: 260px;
-                height: 100%;
-            }
             .card-title {
                 margin-bottom: 14px;
                 font-size: 1rem;
@@ -769,10 +891,11 @@
             .main-content {
                 flex-direction: column;
             }
-            #live-pnl-card,
+            #live-pnl-card {
+                flex: 1 1 auto;
+            }
             #strategy-card {
                 flex: 1 1 auto;
-                height: auto;
             }
             .panel-splitter {
                 display: none;
@@ -831,12 +954,19 @@
             .chart-controls {
                 justify-content: center;
             }
-            #pnl-chart {
-                min-height: 240px;
-                height: 240px;
+            .shift-panel {
+                text-align: left;
             }
-            #option-chain-table {
-                overflow-x: auto;
+            .shift-controls {
+                width: 100%;
+                justify-content: space-between;
+            }
+            .shift-count-input {
+                width: 84px;
+            }
+            .shift-action-btn {
+                min-width: calc(50% - 46px);
+                font-size: 0.76rem;
             }
             #net-pnl {
                 flex-direction: column;
@@ -867,10 +997,6 @@
             .vital-value {
                 font-size: 0.95rem;
             }
-            #live-pnl-card,
-            #strategy-card {
-                height: clamp(420px, 70dvh, 820px);
-            }
             .card {
                 padding: 14px;
             }
@@ -890,7 +1016,7 @@
 <body>
 
     <header class="main-header">
-        <h1><i class="fa-solid fa-chart-line" style="color: var(--accent-primary);"></i> Option Chain Dashboard</h1>
+        <h1><i class="fa-solid fa-chart-line" style="color: var(--accent-primary);"></i> Delta IV Dashboard</h1>
         <div class="header-controls">
             <div class="cockpit-control">
                 <label for="index-select">Index</label>
@@ -960,13 +1086,41 @@
 
     <main class="main-content">
         <div id="live-pnl-card" class="card">
-            <h3 class="card-title"><i class="fa-solid fa-wave-square"></i> Live P&L</h3>
-            <div class="chart-controls">
-                <button id="manual-exit-btn" class="btn btn-danger"><i class="fa-solid fa-circle-stop"></i> Exit Positions</button>
-                <button id="manual-sl-btn" class="btn btn-warning"><i class="fa-solid fa-shield-halved"></i> Place SL Orders</button>
-                <button id="cancel-sl-btn" class="btn btn-secondary"><i class="fa-solid fa-ban"></i> Cancel SL Orders</button>
+            <div class="controls-zone">
+                <h3 class="card-title"><i class="fa-solid fa-wave-square"></i> Live P&L</h3>
+                <div class="chart-controls">
+                    <button id="manual-exit-btn" class="btn btn-danger"><i class="fa-solid fa-circle-stop"></i> Exit All Positions</button>
+                    <button id="manual-sl-btn" class="btn btn-warning"><i class="fa-solid fa-shield-halved"></i> Place SL Orders</button>
+                    <button id="cancel-sl-btn" class="btn btn-secondary"><i class="fa-solid fa-ban"></i> Cancel SL Orders</button>
+                    <div class="shift-panel">
+                        <div class="shift-panel-title">Shift Legs</div>
+                        <div id="shift-legs-list" class="shift-legs-list">
+                            <div class="shift-empty">Loading open legs...</div>
+                        </div>
+                        <div class="shift-controls">
+                            <div class="shift-qty-toggle">
+                                <input id="shift-use-qty" type="checkbox" />
+                                <label for="shift-use-qty">Use Qty</label>
+                            </div>
+                            <input id="shift-qty-input" class="shift-qty-input" type="number" min="1" step="1" value="1" disabled />
+                            <label for="shift-count-input">Strikes</label>
+                            <input id="shift-count-input" class="shift-count-input" type="number" min="1" step="1" value="1" />
+                            <button id="shift-away-btn" class="shift-action-btn away" title="Move selected legs farther from spot (OTM)">
+                                Move Away / OTM
+                            </button>
+                            <button id="shift-near-btn" class="shift-action-btn near" title="Move selected legs closer to spot (ITM)">
+                                Move Near / ITM
+                            </button>
+                            <button id="shift-exit-selected-btn" class="shift-action-btn exit" title="Exit selected checked legs">
+                                Exit Selected Position
+                            </button>
+                        </div>
+                    </div>
+                </div>
             </div>
-            <div id="pnl-chart"></div>
+            <div class="chart-zone">
+                <div id="pnl-chart"></div>
+            </div>
         </div>
 
         <div id="main-splitter" class="panel-splitter" role="separator" aria-label="Resize Live PnL panel" aria-orientation="vertical"></div>
@@ -997,12 +1151,6 @@
 </div>
         </div>
     </main>
-    </div>
-
-    <div class="option-chain-container card">
-        <h2 class="card-title" style="justify-content: center;"><i class="fa-solid fa-table-cells"></i> Option Chain</h2>
-        <div id="option-chain-table">
-            </div>
     </div>
 
     <div id="toast-container" class="toast-container" aria-live="polite" aria-atomic="true"></div>

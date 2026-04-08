@@ -440,21 +440,12 @@ def get_current_iron_condor():
     strangle_credit = ce_fut_atm_ltp + pe_fut_atm_ltp 
     
     
-    option_chain_selected = {k: v for k, v in option_tokens.items() if v['strike'] in strike_selected}
-    # --- Fetch OI data in bulk and update live_data with OI values ---
-    try:
-        quote_response = kite.quote(list(option_chain_selected.keys()))
-        for token in option_chain_selected:
-            token_data = quote_response.get(str(token), {})
-            if 'oi' in token_data:
-                live_data[f"{token}_oi"] = token_data['oi']
-    except Exception as e:
-        print(f"⚠️ Failed to fetch OI data: {e}")
+    selected_option_tokens = {k: v for k, v in option_tokens.items() if v['strike'] in strike_selected}
     options_data = []
 
     for strike in strike_selected:
         for opt_type in ['CE', 'PE']:
-            token = next((k for k, v in option_chain_selected.items()
+            token = next((k for k, v in selected_option_tokens.items()
                           if v['strike'] == strike and v['type'] == opt_type), None)
             if not token or token not in live_data:
                 continue
@@ -467,18 +458,14 @@ def get_current_iron_condor():
             if np.isnan(iv) or iv > 3:
                 continue
             delta = bs_delta(future_price, strike, T, r, iv, option_type)
-            OI = live_data.get(f"{token}_oi")
-            if OI is None:
-                continue
 
             options_data.append({
-                'instrument_token': option_chain_selected[token]['tradingsymbol'],
+                'instrument_token': selected_option_tokens[token]['tradingsymbol'],
                 'strike': strike,
                 'type': opt_type,
                 'ltp': float(opt_price),
                 'iv': float(iv),
-                'delta': float(delta),
-                'oi':float(OI)
+                'delta': float(delta)
             })
     
     # stradle = strike_prices[atm_index]

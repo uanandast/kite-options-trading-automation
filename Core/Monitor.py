@@ -7,6 +7,7 @@ Created on Sun Apr  6 13:13:02 2025
 """
 import time
 import os
+import re
 from urllib import response
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from kiteconnect import KiteConnect
@@ -54,6 +55,13 @@ is_exiting = False
 
 # Track SL order IDs and matched hedge legs
 placed_sl_orders = {}
+_instrument_cache = {}
+
+INDEX_STRIKE_STEP = {
+    "BANKNIFTY": 100,
+    "NIFTY": 50,
+    "SENSEX": 100,
+}
 
 def get_margin():
     margin = kite.margins('equity').get('available')['collateral'] + kite.margins('equity').get('available')['opening_balance']  
@@ -211,6 +219,342 @@ def cancel_all_sl_orders(fast=False):
             "errors": 1,
             "error": str(e),
         }
+
+
+
+def _load_instruments(exchange):
+    now = time.time()
+    cached = _instrument_cache.get(exchange)
+    if cached and (now - cached["ts"] < 120):
+        return cached["data"]
+    data = kite.instruments(exchange)
+    _instrument_cache[exchange] = {"ts": now, "data": data}
+    return data
+
+
+def _position_index_key(position):
+    return f"{position.get('exchange')}::{position.get('tradingsymbol')}"
+
+
+def _extract_opt_type(position):
+    symbol = str(position.get("tradingsymbol", "")).upper()
+    if symbol.endswith("CE"):
+        return "CE"
+    if symbol.endswith("PE"):
+        return "PE"
+    return None
+
+
+def _parse_strike_from_symbol(symbol):
+    match = re.search(r"(\d+)(CE|PE)$", str(symbol).upper())
+    if not match:
+        return None
+    try:
+        return float(match.group(1))
+    except ValueError:
+        return None
+
+
+def _extract_instrument_details(position, instruments):
+    token = position.get("instrument_token")
+    if token is not None:
+        try:
+            token_int = int(token)
+            by_token = next((inst for inst in instruments if int(inst.get("instrument_token", -1)) == token_int), None)
+            if by_token:
+                return by_token
+        except Exception:
+            pass
+    symbol = position.get("tradingsymbol")
+    return next((inst for inst in instruments if inst.get("tradingsymbol") == symbol), None)
+
+
+def _determine_strike_step(name, same_family):
+    normalized = str(name or "").upper()
+    if "BANKNIFTY" in normalized:
+        return INDEX_STRIKE_STEP["BANKNIFTY"]
+    if "SENSEX" in normalized:
+        return INDEX_STRIKE_STEP["SENSEX"]
+    if "NIFTY" in normalized:
+        return INDEX_STRIKE_STEP["NIFTY"]
+
+    unique_strikes = sorted({float(inst.get("strike", 0)) for inst in same_family if float(inst.get("strike", 0)) > 0})
+    diffs = []
+    for i in range(1, len(unique_strikes)):
+        diff = unique_strikes[i] - unique_strikes[i - 1]
+        if diff > 0:
+            diffs.append(diff)
+    if diffs:
+        return int(round(min(diffs)))
+    return 50
+
+
+def _compute_target_strike(current_strike, opt_type, shift_steps, strike_step):
+    if opt_type == "CE":
+        return float(current_strike) + (shift_steps * strike_step)
+    if opt_type == "PE":
+        return float(current_strike) - (shift_steps * strike_step)
+    raise ValueError(f"Unsupported option type for shift: {opt_type}")
+
+
+def _place_market_entry(order_template, quantity):
+    freeze_limit = 1755
+    order_ids = []
+    for i in range(0, quantity, freeze_limit):
+        chunk_qty = min(freeze_limit, quantity - i)
+        order_id = kite.place_order(
+            exchange=order_template["exchange"],
+            tradingsymbol=order_template["tradingsymbol"],
+            transaction_type=order_template["transaction_type"],
+            quantity=chunk_qty,
+            order_type="MARKET",
+            product=order_template["product"],
+            variety="regular",
+            market_protection=-1
+        )
+        order_ids.append(order_id)
+    return order_ids
+
+
+def _open_option_positions_snapshot():
+    positions = kite.positions()["net"]
+    return [
+        p for p in positions
+        if p.get("quantity", 0) != 0
+        and str(p.get("tradingsymbol", "")).upper().endswith(("CE", "PE"))
+        and p.get("exchange") in ("NFO", "BFO")
+    ]
+
+
+def _resolve_open_position(open_positions, symbol, exchange=""):
+    exchange_norm = str(exchange or "").strip().upper()
+    if exchange_norm:
+        matched = next(
+            (
+                p for p in open_positions
+                if p.get("tradingsymbol") == symbol and p.get("exchange") == exchange_norm
+            ),
+            None
+        )
+        if matched:
+            return matched
+    candidates = [p for p in open_positions if p.get("tradingsymbol") == symbol]
+    return candidates[0] if len(candidates) == 1 else None
+
+
+def get_open_option_positions():
+    option_positions = _open_option_positions_snapshot()
+
+    result = []
+    for p in option_positions:
+        quantity = int(p.get("quantity", 0))
+        result.append({
+            "tradingsymbol": p.get("tradingsymbol"),
+            "exchange": p.get("exchange"),
+            "product": p.get("product"),
+            "quantity": quantity,
+            "side": "SHORT" if quantity < 0 else "LONG",
+            "avg_price": p.get("average_price"),
+        })
+    result.sort(key=lambda item: (item["exchange"], item["tradingsymbol"]))
+    return result
+
+
+def shift_selected_legs(selected_legs, shift_steps):
+    if not isinstance(shift_steps, int):
+        raise ValueError("Shift must be an integer")
+    if shift_steps == 0:
+        raise ValueError("Shift cannot be 0")
+
+    open_positions = _open_option_positions_snapshot()
+
+    # Cancel all open SL orders once before rolling legs to free margin headroom.
+    all_sl_cancel_result = cancel_all_sl_orders(fast=True)
+    results = []
+    for leg in selected_legs:
+        symbol = str(leg.get("tradingsymbol", "")).strip()
+        exchange = str(leg.get("exchange", "")).strip().upper()
+        if not symbol:
+            results.append({
+                "status": "failed",
+                "old_symbol": "",
+                "new_symbol": None,
+                "error": "Missing tradingsymbol",
+            })
+            continue
+
+        pos = _resolve_open_position(open_positions, symbol, exchange=exchange)
+        if pos is None:
+            results.append({
+                "status": "failed",
+                "old_symbol": symbol,
+                "new_symbol": None,
+                "error": "Position not found or already closed",
+            })
+            continue
+
+        pos_exchange = pos.get("exchange")
+        pos_symbol = pos.get("tradingsymbol")
+        pos_qty = int(pos.get("quantity", 0))
+        opt_type = _extract_opt_type(pos)
+        if opt_type is None:
+            results.append({
+                "status": "failed",
+                "old_symbol": pos_symbol,
+                "new_symbol": None,
+                "error": "Not an option leg",
+            })
+            continue
+
+        try:
+            instruments = _load_instruments(pos_exchange)
+            current_inst = _extract_instrument_details(pos, instruments)
+            if not current_inst:
+                raise RuntimeError("Unable to resolve instrument metadata")
+
+            current_strike = float(current_inst.get("strike", 0) or 0)
+            if current_strike <= 0:
+                parsed = _parse_strike_from_symbol(pos_symbol)
+                if parsed is None:
+                    raise RuntimeError("Unable to resolve current strike")
+                current_strike = parsed
+
+            same_family = [
+                inst for inst in instruments
+                if inst.get("exchange") == current_inst.get("exchange")
+                and inst.get("expiry") == current_inst.get("expiry")
+                and inst.get("name") == current_inst.get("name")
+                and inst.get("instrument_type") == current_inst.get("instrument_type")
+            ]
+            strike_step = _determine_strike_step(current_inst.get("name"), same_family)
+            target_strike = _compute_target_strike(current_strike, opt_type, shift_steps, strike_step)
+
+            target_inst = next(
+                (
+                    inst for inst in same_family
+                    if float(inst.get("strike", -1)) == float(target_strike)
+                ),
+                None
+            )
+            if not target_inst:
+                raise RuntimeError(f"No target symbol for strike {int(target_strike)} {opt_type} same expiry")
+
+            is_short = pos_qty < 0
+            sl_cancel_result = {"requested": 0, "cancelled": 0, "errors": 0}
+
+            exit_order_ids = exit_position(pos)
+            if not exit_order_ids:
+                raise RuntimeError("Square off failed")
+
+            entry_qty = abs(pos_qty)
+            requested_new_qty = leg.get("new_qty")
+            if requested_new_qty is not None:
+                try:
+                    parsed_new_qty = int(requested_new_qty)
+                except (TypeError, ValueError):
+                    raise RuntimeError("Invalid new_qty for leg")
+                if parsed_new_qty <= 0:
+                    raise RuntimeError("new_qty must be positive")
+                entry_qty = parsed_new_qty
+
+            entry_side = "SELL" if is_short else "BUY"
+            entry_order_ids = _place_market_entry({
+                "exchange": pos_exchange,
+                "tradingsymbol": target_inst["tradingsymbol"],
+                "transaction_type": entry_side,
+                "product": pos.get("product"),
+            }, entry_qty)
+
+            sl_place_result = {"placed": 0, "error": None}
+
+            results.append({
+                "status": "success",
+                "old_symbol": pos_symbol,
+                "new_symbol": target_inst["tradingsymbol"],
+                "exchange": pos_exchange,
+                "quantity": abs(pos_qty),
+                "entry_quantity": entry_qty,
+                "entry_side": entry_side,
+                "target_strike": target_strike,
+                "sl_cancelled": sl_cancel_result.get("cancelled", 0),
+                "sl_cancel_errors": sl_cancel_result.get("errors", 0),
+                "sl_placed": sl_place_result["placed"],
+                "sl_error": sl_place_result["error"],
+                "entry_order_ids": entry_order_ids,
+            })
+        except Exception as e:
+            results.append({
+                "status": "failed",
+                "old_symbol": pos_symbol,
+                "new_symbol": None,
+                "exchange": pos_exchange,
+                "error": str(e),
+            })
+
+    succeeded = sum(1 for r in results if r.get("status") == "success")
+    failed = sum(1 for r in results if r.get("status") == "failed")
+    return {
+        "requested": len(selected_legs),
+        "succeeded": succeeded,
+        "failed": failed,
+        "all_sl_cancel": all_sl_cancel_result,
+        "results": results,
+    }
+
+
+def exit_selected_legs(selected_legs):
+    open_positions = _open_option_positions_snapshot()
+    results = []
+
+    for leg in selected_legs:
+        symbol = str(leg.get("tradingsymbol", "")).strip()
+        exchange = str(leg.get("exchange", "")).strip().upper()
+        if not symbol:
+            results.append({
+                "status": "failed",
+                "tradingsymbol": "",
+                "exchange": exchange,
+                "error": "Missing tradingsymbol",
+            })
+            continue
+
+        pos = _resolve_open_position(open_positions, symbol, exchange=exchange)
+        if pos is None:
+            results.append({
+                "status": "failed",
+                "tradingsymbol": symbol,
+                "exchange": exchange,
+                "error": "Position not found or already closed",
+            })
+            continue
+
+        try:
+            position_qty = abs(int(pos.get("quantity", 0)))
+            order_ids = exit_position(pos, quantity=position_qty)
+            results.append({
+                "status": "success",
+                "tradingsymbol": pos.get("tradingsymbol"),
+                "exchange": pos.get("exchange"),
+                "quantity": position_qty,
+                "order_ids": order_ids,
+            })
+        except Exception as e:
+            results.append({
+                "status": "failed",
+                "tradingsymbol": pos.get("tradingsymbol"),
+                "exchange": pos.get("exchange"),
+                "quantity": abs(int(pos.get("quantity", 0))),
+                "error": str(e),
+            })
+
+    succeeded = sum(1 for item in results if item.get("status") == "success")
+    failed = sum(1 for item in results if item.get("status") == "failed")
+    return {
+        "requested": len(selected_legs),
+        "succeeded": succeeded,
+        "failed": failed,
+        "results": results,
+    }
 
 
 
@@ -401,15 +745,34 @@ def stoploss_order_button():
 
 
 
-def exit_position(pos, side):
+def exit_position(pos, side=None, quantity=None):
     try:
-        total_qty = abs(pos["quantity"])
+        total_qty = abs(int(pos.get("quantity", 0)))
+        if total_qty <= 0:
+            return []
+
+        requested_qty = total_qty
+        if quantity is not None:
+            try:
+                requested_qty = int(quantity)
+            except (TypeError, ValueError):
+                print(f"❌ Invalid exit quantity for {pos.get('tradingsymbol')}: {quantity}")
+                return []
+            if requested_qty <= 0:
+                print(f"❌ Exit quantity must be positive for {pos.get('tradingsymbol')}: {requested_qty}")
+                return []
+            if requested_qty > total_qty:
+                print(f"❌ Exit quantity {requested_qty} exceeds open {total_qty} for {pos.get('tradingsymbol')}")
+                return []
+
         freeze_limit = 1755
 
-        side = "BUY" if pos['quantity'] < 0 else "SELL"
+        # Side is derived from current position direction to avoid accidental reversal.
+        side = "BUY" if int(pos.get("quantity", 0)) < 0 else "SELL"
+        order_ids = []
 
-        for i in range(0, total_qty, freeze_limit):
-            chunk_qty = min(freeze_limit, total_qty - i)
+        for i in range(0, requested_qty, freeze_limit):
+            chunk_qty = min(freeze_limit, requested_qty - i)
 
             print(f"🔁 Exiting {pos['tradingsymbol']} with {side}, Qty={chunk_qty}")
             start_ts = time.time()
@@ -425,10 +788,11 @@ def exit_position(pos, side):
             )
             elapsed = time.time() - start_ts
             print(f"✅ Exit order placed: {order_id} ({elapsed:.2f}s)")
-        return True
+            order_ids.append(order_id)
+        return order_ids
     except Exception as e:
         print(f"❌ Error while exiting hedge {pos['tradingsymbol']}: {e}")
-        return False
+        return []
 
 
 
@@ -497,6 +861,7 @@ def calculate_pnl(positions):
 #     return spreads
 
 def Exiting_position(positions):
+    # This Function is called when Button is pressed to exit all positions at once, it will first exit all short legs and then long legs with concurrency to speed up the process.
     # global is_exiting
     # is_exiting = True
     try:
@@ -773,15 +1138,15 @@ def monitor_spreads():
             
             pnl_total, Current_pos_credit = calculate_pnl(positions)
             
-            if pnl_total <= threshold:
-                if threshold_breach_start is None:
-                    threshold_breach_start = current_time
-                elif current_time - threshold_breach_start >= 2:
-                    if account_close ==False:
-                        Exiting_closing_account(positions)
-                        account_close = True
-            else:
-                threshold_breach_start = None
+            # if pnl_total <= threshold:
+            #     if threshold_breach_start is None:
+            #         threshold_breach_start = current_time
+            #     elif current_time - threshold_breach_start >= 2:
+            #         if account_close ==False:
+            #             Exiting_closing_account(positions)
+            #             account_close = True
+            # else:
+            #     threshold_breach_start = None
             routine_close()
             time.sleep(.2)  # Standard monitoring interval
         except Exception as e:
