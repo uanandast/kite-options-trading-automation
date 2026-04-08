@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Option Chain Dashboard</title>
+    <link rel="icon" type="image/svg+xml" href="/static/live-straddle-symbol.svg" />
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/apexcharts"></script>
+  </head>
+  <body>
+    <div class="h-screen overflow-hidden bg-slate-950 text-slate-200">
+      <div class="flex h-10 items-center justify-between border-b border-slate-800 bg-slate-900 px-4 py-2 text-xs">
+        <div class="flex items-center gap-2">
+          <div class="font-bold text-emerald-400" id="symbol">Option Chain Dashboard</div>
+          <select id="index-select" class="rounded border border-slate-700 bg-slate-800 px-2 py-0.5 text-xs font-medium outline-none">
+            <option value="sensex">SENSEX</option>
+            <option value="nifty">NIFTY</option>
+            <option value="banknifty">BANKNIFTY</option>
+          </select>
+          <select id="cockpit-view" class="rounded border border-slate-700 bg-slate-800 px-2 py-0.5 text-xs font-medium outline-none">
+            <option value="both">Chart + Table</option>
+            <option value="table">Table Only</option>
+            <option value="chart">Chart Only</option>
+          </select>
+        </div>
+
+        <div class="flex items-center gap-4 text-xs">
+          <span class="font-mono tracking-tight" id="spot-price">SPOT: <span class="text-emerald-400" id="spot-value">74,616.58</span> <span class="text-slate-400" id="spot-change">(+0.00%)</span></span>
+          <span class="font-mono tracking-tight">SYNTH FUT: <span class="text-rose-500" id="status-left-synth">74,588.00</span></span>
+        </div>
+
+        <div class="flex items-center gap-4 text-xs">
+          <div class="font-mono tracking-tight" id="available-margin">Margin: ₹2,158,304</div>
+          <div class="font-mono tracking-tight"><span class="text-slate-400">Last Updated:</span> <span class="text-slate-300" id="top-updated-time">--:--:--</span></div>
+        </div>
+      </div>
+
+      <div class="main-content flex h-[calc(100vh-40px)]">
+        <div id="live-pnl-card" class="flex w-2/3 flex-col border-r border-slate-800 bg-slate-900 p-2">
+          <div class="mb-2 flex items-center justify-between border-b border-slate-800 pb-1 text-xs font-medium">
+            <div class="flex items-center gap-1">
+              <span class="inline-flex" aria-hidden="true">
+                <svg class="h-[14px] w-[14px] text-slate-300" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M3 3v18h18"></path>
+                  <path d="M7 14l4-4 3 3 5-6"></path>
+                </svg>
+              </span>
+              <span>Live P&amp;L</span>
+            </div>
+            <span class="inline-flex text-slate-400" aria-hidden="true">
+              <svg class="h-[14px] w-[14px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="3"></circle>
+                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06A1.65 1.65 0 0 0 15 19.4a1.65 1.65 0 0 0-1 .6 1.65 1.65 0 0 0-.33 1v.17a2 2 0 0 1-4 0V21a1.65 1.65 0 0 0-.33-1 1.65 1.65 0 0 0-1-.6 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-.6-1 1.65 1.65 0 0 0-1-.33h-.17a2 2 0 0 1 0-4H3a1.65 1.65 0 0 0 1-.33 1.65 1.65 0 0 0 .6-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6c.38-.16.78-.25 1.2-.25H10.5a2 2 0 0 1 4 0h.3c.42 0 .82.09 1.2.25a1.65 1.65 0 0 0 1.9-.37l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.37 1.9c.16.38.25.78.25 1.2V10.5a2 2 0 0 1 0 4h-.17a1.65 1.65 0 0 0-1 .5z"></path>
+              </svg>
+            </span>
+          </div>
+
+          <div class="relative flex-1 bg-black">
+            <div class="absolute inset-0 opacity-20">
+              <div class="absolute inset-0 h-full bg-gradient-to-r from-transparent via-black to-transparent opacity-30"></div>
+              <div id="grid-lines"></div>
+            </div>
+            <div id="pnl-chart" class="absolute inset-0"></div>
+
+            <div class="absolute bottom-3 left-3 text-xs text-slate-400">Click or drag to zoom</div>
+          </div>
+          <div class="mt-2 rounded border border-slate-900 bg-black px-3 py-2">
+            <div class="flex flex-wrap items-center gap-x-5 gap-y-1 text-xs">
+              <span class="font-mono tracking-tight text-slate-200">ATM STRIKE: <span class="text-slate-300" id="vital-atm">74600</span></span>
+              <span class="font-mono tracking-tight text-slate-200">PRICE: <span class="text-rose-500" id="status-strangle-price">1,686.30</span></span>
+              <span class="font-mono tracking-tight text-slate-200">LOW: <span class="text-emerald-400" id="top-straddle-low-inline">--</span></span>
+              <span class="font-mono tracking-tight text-slate-200">HIGH: <span class="text-rose-500" id="top-straddle-high-inline">--</span></span>
+            </div>
+          </div>
+        </div>
+
+        <div id="main-splitter" class="w-px bg-transparent"></div>
+        <div id="strategy-card" class="flex w-1/3 flex-col bg-slate-950 p-3">
+          <div class="mb-3 flex gap-2">
+            <button id="manual-exit-btn" class="flex-1 rounded bg-rose-700 px-2 py-1 text-xs text-slate-200 hover:bg-rose-800" data-action="exit-all">
+              <svg class="mr-1 inline h-[12px] w-[12px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <polyline points="3 6 5 6 21 6"></polyline>
+                <path d="M19 6l-1 14H6L5 6"></path>
+                <path d="M10 11v6"></path>
+                <path d="M14 11v6"></path>
+                <path d="M9 6V4h6v2"></path>
+              </svg>
+              Exit All Positions
+            </button>
+            <button id="manual-sl-btn" class="flex-1 rounded bg-orange-600 px-2 py-1 text-xs text-slate-200 hover:bg-orange-700" data-action="place-sl">Place SL Orders</button>
+            <button id="cancel-sl-btn" class="flex-1 rounded border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-300 hover:bg-slate-700" data-action="cancel-sl">Cancel SL Orders</button>
+          </div>
+
+          <div class="mb-3">
+            <div class="flex border-b border-slate-800 pb-1 text-xs font-medium text-slate-300">
+              <span class="flex-1">LEG</span>
+              <span class="w-16 text-right">STRIKE</span>
+              <span class="w-10 text-right">TYPE</span>
+              <span class="w-20 text-right">LTP</span>
+              <span class="w-16 text-right">DELTA</span>
+            </div>
+
+            <div id="legs-table" class="mt-1 space-y-0.5"></div>
+            <div id="recommendation" class="hidden"></div>
+          </div>
+
+          <div class="mb-2 flex items-center gap-3">
+            <div class="flex items-center gap-1">
+              <span class="text-xs text-slate-400">Use Qty:</span>
+              <input id="shift-use-qty" type="checkbox" class="hidden" checked />
+              <input id="qty-input" type="number" min="1" step="1" value="1" class="w-16 rounded border border-slate-700 bg-slate-900 px-2 py-0.5 text-xs font-mono text-slate-200 outline-none" />
+              <input id="shift-qty-input" type="text" class="hidden" value="1" />
+            </div>
+            <div class="flex items-center gap-1">
+              <span class="text-xs text-slate-400">Strikes:</span>
+              <input id="strikes-input" type="number" min="1" step="1" value="1" class="w-10 rounded border border-slate-700 bg-slate-900 px-1 py-0.5 text-xs font-mono text-slate-200 outline-none" />
+              <input id="shift-count-input" type="text" class="hidden" value="1" />
+            </div>
+            <button id="shift-away-btn" class="flex-1 rounded bg-emerald-700 px-2 py-1 text-xs text-slate-200 hover:bg-emerald-800" data-action="move-away">
+              <svg class="mr-1 inline h-[12px] w-[12px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M12 5v14"></path>
+                <path d="M19 12l-7 7-7-7"></path>
+              </svg>
+              OTM
+            </button>
+            <button id="shift-near-btn" class="flex-1 rounded bg-orange-600 px-2 py-1 text-xs text-slate-200 hover:bg-orange-700" data-action="move-near">
+              <svg class="mr-1 inline h-[12px] w-[12px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M12 19V5"></path>
+                <path d="M5 12l7-7 7 7"></path>
+              </svg>
+              ITM
+            </button>
+            <button id="shift-exit-selected-btn" class="flex-1 rounded border border-rose-700 bg-rose-800/70 px-2 py-1 text-xs text-rose-100 hover:bg-rose-700" type="button">
+              Exit
+            </button>
+          </div>
+
+          <div class="mb-4 rounded border border-slate-800 bg-slate-900/70 p-2">
+            <div class="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-300">Shift Legs</div>
+            <div id="shift-legs-list" class="max-h-36 space-y-1 overflow-y-auto">
+              <div class="rounded border border-slate-800 bg-slate-900 px-2 py-2 text-xs text-slate-400">Loading open legs...</div>
+            </div>
+          </div>
+
+          <div class="mt-auto rounded border border-slate-800 bg-slate-900 p-2">
+            <div class="grid grid-cols-3 gap-2 text-xs">
+              <div>
+                <span class="text-slate-400">NET DELTA</span>
+                <div id="status-left-net-delta" class="font-mono text-emerald-400">+0.06</div>
+              </div>
+              <div>
+                <span class="text-slate-400">STRADDLE</span>
+                <div id="status-left-strangle" class="font-mono text-slate-300">3,500.00</div>
+              </div>
+              <div>
+                <span class="text-slate-400">CSP</span>
+                <div id="status-left-csp" class="font-mono text-slate-300">--</div>
+              </div>
+              <div>
+                <span class="text-slate-400">SYNTH FUT</span>
+                <div id="status-left-synth-bottom" class="font-mono text-slate-300">74,588.00</div>
+              </div>
+              <div>
+                <span class="text-slate-400">SKEW</span>
+                <div id="status-left-skew" class="font-mono text-slate-300">8.2</div>
+              </div>
+              <div>
+                <span class="text-slate-400">DELTA</span>
+                <div id="status-left-delta" class="font-mono text-slate-300">--</div>
+              </div>
+            </div>
+
+            <div id="status-pnl-tooltip" class="mt-3 border-t border-slate-800 pt-2">
+              <div class="text-slate-400">NET P&amp;L</div>
+              <div id="status-net-pnl-value" class="font-mono text-xl font-semibold text-emerald-400">+1,246.30</div>
+              <i id="status-pnl-arrow" class="hidden"></i>
+              <svg id="status-sparkline" class="hidden mt-2 h-5 w-14" viewBox="0 0 54 20" aria-hidden="true">
+                <path id="status-sparkline-path" d="" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"></path>
+              </svg>
+              <span id="status-delta-tooltip" class="hidden"></span>
+              <span id="status-delta-value" class="hidden"></span>
+              <span id="status-strangle-tooltip" class="hidden"></span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div id="toast-container" class="fixed bottom-4 right-4 z-50 space-y-2"></div>
+
+    <script src="static/script_r.js"></script>
+  </body>
+</html>
