@@ -45,7 +45,7 @@
             --put-header: rgba(33, 197, 93, 0.12);
 
             /* Split layout variables */
-            --live-panel-size: 50%;
+            --live-panel-size: 62%;
             --main-panel-gap: 14px;
         }
 
@@ -60,7 +60,7 @@
             color: var(--text-primary);
             font-family: 'Inter', -apple-system, sans-serif;
             margin: 0;
-            padding: 0;
+            padding: 0 0 72px 0;
             line-height: 1.5;
         }
 
@@ -282,11 +282,14 @@
         }
         #live-pnl-card .controls-zone {
             flex: 0 0 auto;
-            padding: 16px 20px 10px 20px;
+            padding: 12px 20px 4px 20px;
             display: flex;
             flex-direction: column;
             gap: 10px;
             overflow: visible;
+        }
+        #live-pnl-card .controls-zone .card-title {
+            margin: 0;
         }
         #live-pnl-card .chart-zone {
             flex: 1 1 0;
@@ -783,7 +786,167 @@
             align-items: center;
         }
 
-
+        .strangle-status-bar {
+            position: fixed;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            height: 50px;
+            padding: 0 18px;
+            background: #0f1419;
+            border-top: 1px solid rgba(40, 132, 255, 0.4);
+            box-shadow:
+                0 -6px 18px rgba(6, 10, 18, 0.9),
+                0 0 18px rgba(40, 132, 255, 0.2);
+            z-index: 1300;
+            display: grid;
+            grid-template-columns: 1fr auto 1fr;
+            align-items: center;
+            gap: 18px;
+            font-variant-numeric: tabular-nums;
+        }
+        .status-left-label {
+            display: none;
+        }
+        .status-left-metrics {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            min-width: 0;
+            overflow: hidden;
+            white-space: nowrap;
+        }
+        .status-inline-metric {
+            display: inline-flex;
+            align-items: baseline;
+            gap: 5px;
+            min-width: 0;
+            font-size: 12px;
+        }
+        .status-inline-metric .metric-label {
+            color: #8fa5c6;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            font-size: 10px;
+            flex-shrink: 0;
+        }
+        .status-inline-metric .metric-value {
+            color: #e3ecfb;
+            font-weight: 600;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .status-center {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            min-width: 290px;
+        }
+        .status-metric-title {
+            color: #9bb4d7;
+            font-size: 11px;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+            margin-right: 2px;
+        }
+        .status-pnl-wrap {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .status-arrow {
+            font-size: 14px;
+            transition: transform 0.25s ease;
+        }
+        .status-arrow.negative {
+            transform: rotate(180deg);
+        }
+        .status-pnl-value {
+            font-size: 24px;
+            line-height: 1;
+            font-weight: 700;
+            letter-spacing: -0.01em;
+            transition: color 0.2s ease;
+        }
+        .status-pnl-value.positive,
+        .status-arrow.positive {
+            color: #00ff88;
+        }
+        .status-pnl-value.negative,
+        .status-arrow.negative {
+            color: #ff4d4d;
+        }
+        .status-sparkline {
+            width: 54px;
+            height: 20px;
+            display: none;
+        }
+        .status-sparkline path {
+            fill: none;
+            stroke-width: 2;
+            stroke-linecap: round;
+            stroke-linejoin: round;
+        }
+        .status-sparkline.positive path {
+            stroke: #00ff88;
+        }
+        .status-sparkline.negative path {
+            stroke: #ff4d4d;
+        }
+        .status-right {
+            display: flex;
+            justify-content: flex-end;
+            align-items: center;
+            gap: 16px;
+        }
+        .status-mini-metric {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 14px;
+            font-weight: 600;
+            color: #b0b0b0;
+            white-space: nowrap;
+        }
+        .status-mini-metric .value {
+            transition: color 0.2s ease;
+        }
+        .status-delta-value.positive {
+            color: #00ff88;
+        }
+        .status-delta-value.neutral {
+            color: #f59e0b;
+        }
+        .status-delta-value.negative {
+            color: #ff4d4d;
+        }
+        .status-tooltip {
+            position: relative;
+            cursor: help;
+        }
+        .status-tooltip::after {
+            content: attr(data-tooltip);
+            position: absolute;
+            left: 50%;
+            bottom: calc(100% + 8px);
+            transform: translateX(-50%) translateY(4px);
+            opacity: 0;
+            pointer-events: none;
+            font-size: 11px;
+            color: #dbe9ff;
+            background: rgba(10, 14, 23, 0.98);
+            border: 1px solid rgba(124, 169, 255, 0.5);
+            border-radius: 7px;
+            padding: 7px 9px;
+            white-space: nowrap;
+            transition: opacity 0.18s ease, transform 0.18s ease;
+            box-shadow: 0 8px 18px rgba(0, 0, 0, 0.55);
+        }
+        .status-tooltip:hover::after {
+            opacity: 1;
+            transform: translateX(-50%) translateY(0);
+        }
         /* Specific Table Cell Styling */
         .call-header { 
             background-color: var(--call-header) !important; 
@@ -908,6 +1071,9 @@
             }
         }
         @media (max-width: 768px) {
+            body {
+                padding-bottom: 136px;
+            }
             .dashboard-shell {
                 padding: 0 12px;
             }
@@ -975,6 +1141,25 @@
             }
             .metrics-row {
                 grid-template-columns: 1fr;
+            }
+            .strangle-status-bar {
+                height: auto;
+                min-height: 50px;
+                grid-template-columns: 1fr;
+                gap: 8px;
+                padding: 8px 12px;
+            }
+            .status-center {
+                justify-content: flex-start;
+                min-width: 0;
+            }
+            .status-right {
+                justify-content: flex-start;
+            }
+            .status-left-metrics {
+                flex-wrap: wrap;
+                white-space: normal;
+                gap: 8px;
             }
         }
         @media (max-width: 1440px), (max-height: 900px) {
@@ -1088,35 +1273,6 @@
         <div id="live-pnl-card" class="card">
             <div class="controls-zone">
                 <h3 class="card-title"><i class="fa-solid fa-wave-square"></i> Live P&L</h3>
-                <div class="chart-controls">
-                    <button id="manual-exit-btn" class="btn btn-danger"><i class="fa-solid fa-circle-stop"></i> Exit All Positions</button>
-                    <button id="manual-sl-btn" class="btn btn-warning"><i class="fa-solid fa-shield-halved"></i> Place SL Orders</button>
-                    <button id="cancel-sl-btn" class="btn btn-secondary"><i class="fa-solid fa-ban"></i> Cancel SL Orders</button>
-                    <div class="shift-panel">
-                        <div class="shift-panel-title">Shift Legs</div>
-                        <div id="shift-legs-list" class="shift-legs-list">
-                            <div class="shift-empty">Loading open legs...</div>
-                        </div>
-                        <div class="shift-controls">
-                            <div class="shift-qty-toggle">
-                                <input id="shift-use-qty" type="checkbox" />
-                                <label for="shift-use-qty">Use Qty</label>
-                            </div>
-                            <input id="shift-qty-input" class="shift-qty-input" type="number" min="1" step="1" value="1" disabled />
-                            <label for="shift-count-input">Strikes</label>
-                            <input id="shift-count-input" class="shift-count-input" type="number" min="1" step="1" value="1" />
-                            <button id="shift-away-btn" class="shift-action-btn away" title="Move selected legs farther from spot (OTM)">
-                                Move Away / OTM
-                            </button>
-                            <button id="shift-near-btn" class="shift-action-btn near" title="Move selected legs closer to spot (ITM)">
-                                Move Near / ITM
-                            </button>
-                            <button id="shift-exit-selected-btn" class="shift-action-btn exit" title="Exit selected checked legs">
-                                Exit Selected Position
-                            </button>
-                        </div>
-                    </div>
-                </div>
             </div>
             <div class="chart-zone">
                 <div id="pnl-chart"></div>
@@ -1134,23 +1290,82 @@
                    </tbody>
                 </table>
             </div>
-
-            <div id="net-pnl" class="positive">
-  <span class="pnl-group">
-    <span class="label">Net P&amp;L:</span> 
-    <span id="pnl-combined" class="value negative">₹0.00 (0.00%)</span>
-  </span>
-  <span class="credit-group">
-    <span class="label">Current Strangle Price:</span> 
-    <span id="credit-value" class="value">₹0.00</span>
-  </span>
-  <span class="delta-group">
-    <span class="label">Delta:</span> 
-    <span id="delta-value" class="value">0.00</span>
-  </span>
-</div>
+            <div class="chart-controls">
+                <button id="manual-exit-btn" class="btn btn-danger"><i class="fa-solid fa-circle-stop"></i> Exit All Positions</button>
+                <button id="manual-sl-btn" class="btn btn-warning"><i class="fa-solid fa-shield-halved"></i> Place SL Orders</button>
+                <button id="cancel-sl-btn" class="btn btn-secondary"><i class="fa-solid fa-ban"></i> Cancel SL Orders</button>
+                <div class="shift-panel">
+                    <div class="shift-panel-title">Shift Legs</div>
+                    <div id="shift-legs-list" class="shift-legs-list">
+                        <div class="shift-empty">Loading open legs...</div>
+                    </div>
+                    <div class="shift-controls">
+                        <div class="shift-qty-toggle">
+                            <input id="shift-use-qty" type="checkbox" />
+                            <label for="shift-use-qty">Use Qty</label>
+                        </div>
+                        <input id="shift-qty-input" class="shift-qty-input" type="number" min="1" step="1" value="1" disabled />
+                        <label for="shift-count-input">Strikes</label>
+                        <input id="shift-count-input" class="shift-count-input" type="number" min="1" step="1" value="1" />
+                        <button id="shift-away-btn" class="shift-action-btn away" title="Move selected legs farther from spot (OTM)">
+                            Move Away / OTM
+                        </button>
+                        <button id="shift-near-btn" class="shift-action-btn near" title="Move selected legs closer to spot (ITM)">
+                            Move Near / ITM
+                        </button>
+                        <button id="shift-exit-selected-btn" class="shift-action-btn exit" title="Exit selected checked legs">
+                            Exit Selected Position
+                        </button>
+                    </div>
+                </div>
+            </div>
         </div>
     </main>
+    </div>
+
+    <div class="strangle-status-bar" role="status" aria-live="polite">
+        <div class="status-left-metrics">
+            <div class="status-inline-metric">
+                <span class="metric-label">Net Delta</span>
+                <span id="status-left-net-delta" class="metric-value">--</span>
+            </div>
+            <div class="status-inline-metric">
+                <span class="metric-label">Strangle Price</span>
+                <span id="status-left-strangle" class="metric-value">--</span>
+            </div>
+            <div class="status-inline-metric">
+                <span class="metric-label">Synth Fut Price</span>
+                <span id="status-left-synth" class="metric-value">--</span>
+            </div>
+            <div class="status-inline-metric">
+                <span class="metric-label">Skew</span>
+                <span id="status-left-skew" class="metric-value">--</span>
+            </div>
+        </div>
+
+        <div class="status-center status-tooltip" id="status-pnl-tooltip" data-tooltip="Net Profit/Loss: +₹12,450 (+3.2%)">
+            <span class="status-metric-title">Net P&amp;L</span>
+            <div class="status-pnl-wrap">
+                <i id="status-pnl-arrow" class="fa-solid fa-arrow-up status-arrow positive" aria-hidden="true"></i>
+                <span id="status-net-pnl-value" class="status-pnl-value positive">+₹12,450</span>
+                <svg id="status-sparkline" class="status-sparkline positive" viewBox="0 0 54 20" aria-hidden="true">
+                    <path id="status-sparkline-path" d="M1 15 L9 14 L17 10 L25 11 L33 7 L41 8 L53 3"></path>
+                </svg>
+            </div>
+        </div>
+
+        <div class="status-right">
+            <div class="status-mini-metric status-tooltip" id="status-strangle-tooltip" data-tooltip="Current Strangle Price: 125">
+                <i class="fa-solid fa-indian-rupee-sign" aria-hidden="true"></i>
+                <span>Strangle Price:</span>
+                <span id="status-strangle-price" class="value">₹245</span>
+            </div>
+            <div class="status-mini-metric status-tooltip" id="status-delta-tooltip" data-tooltip="Delta: 0.12 (Mild Bullish)">
+                <span aria-hidden="true">Δ</span>
+                <span>Delta:</span>
+                <span id="status-delta-value" class="value status-delta-value positive">0.12</span>
+            </div>
+        </div>
     </div>
 
     <div id="toast-container" class="toast-container" aria-live="polite" aria-atomic="true"></div>

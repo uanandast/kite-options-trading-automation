@@ -10,6 +10,9 @@ let pendingChartUpdate = false;
 let lastChartUpdate = Date.now();
 let currentSelectedIndex = 'nifty';
 let openOptionPositions = [];
+let future_price = null;
+let skew = null;
+let delta = null;
 const SPLITTER_STORAGE_KEY = 'dashboardSplitterWidth_v1';
 let observedStraddleLow = null;
 let observedStraddleHigh = null;
@@ -67,26 +70,6 @@ function renderRecommendation(legs, net_delta, strangle_credit, future_price, sk
         html += `<tr><td colspan="5">No legs data available.</td></tr>`;
     }
     html += `</table>`;
-
-    const metrics = [
-        isValidNumber(Number(net_delta)) ? { label: 'Net Delta', value: Number(net_delta).toFixed(3) } : null,
-        isValidNumber(Number(strangle_credit)) ? { label: 'Straddle Price', value: `₹${formatIndianNumber(Number(strangle_credit))}` } : null,
-        isValidNumber(Number(future_price)) ? { label: 'Synth Fut Price', value: `₹${formatIndianNumber(Number(future_price))}` } : null,
-        isValidNumber(Number(skew)) ? { label: 'Skew', value: Number(skew).toFixed(2) } : null
-    ].filter(Boolean);
-
-    if (metrics.length > 0) {
-        html += `<div class="metrics-row">`;
-        metrics.forEach(metric => {
-            html += `
-                <div class="metric">
-                    <span class="label">${metric.label}:</span>
-                    <span class="value"><strong>${metric.value}</strong></span>
-                </div>
-            `;
-        });
-        html += `</div>`;
-    }
     return html;
 }
 
@@ -155,6 +138,26 @@ function updateTopCockpit(json, atmStrike = null) {
     setVitalValue('vital-card-low', 'vital-low', lowNum !== null ? `₹${formatIndianNumber(lowNum)}` : '--', lowNum !== null);
     setVitalValue('vital-card-high', 'vital-high', highNum !== null ? `₹${formatIndianNumber(highNum)}` : '--', highNum !== null);
     setVitalValue('vital-card-updated', 'vital-updated', updated, true);
+
+    const statusNetDeltaEl = document.getElementById('status-left-net-delta');
+    const statusStrangleEl = document.getElementById('status-left-strangle');
+    const statusSynthEl = document.getElementById('status-left-synth');
+    const statusSkewEl = document.getElementById('status-left-skew');
+
+    if (statusNetDeltaEl) {
+        const netDeltaNum = Number(json.net_delta);
+        statusNetDeltaEl.textContent = Number.isFinite(netDeltaNum) ? netDeltaNum.toFixed(3) : '--';
+    }
+    if (statusStrangleEl) {
+        statusStrangleEl.textContent = priceNum !== null ? `₹${formatIndianNumber(priceNum).replace(/\.00$/, '')}` : '--';
+    }
+    if (statusSynthEl) {
+        statusSynthEl.textContent = synthFutNum !== null ? `₹${formatIndianNumber(synthFutNum).replace(/\.00$/, '')}` : '--';
+    }
+    if (statusSkewEl) {
+        const skewNum = Number(json.skew);
+        statusSkewEl.textContent = Number.isFinite(skewNum) ? skewNum.toFixed(2) : '--';
+    }
 }
 
 function setMainViewMode(mode) {
@@ -345,20 +348,25 @@ async function fetchPnl() {
 
         const ts = Date.now();
         const netPnl = Number(json.net_pnl);
-        const apiStraddle = Number(json.straddle_price);
+        const chartApiStraddle = Number(json.straddle_price);
+        const statusApiStraddle = Number(json.Current_pos_credit);
         const socketStraddle = Number(straddlePriceFromSocket);
 
-        let straddlePrice = Number.isFinite(apiStraddle) ? apiStraddle : null;
-        if (!Number.isFinite(straddlePrice)) {
-            straddlePrice = Number.isFinite(socketStraddle) ? socketStraddle : null;
+        // Chart should reflect live strangle/straddle ticks.
+        let chartStraddlePrice = Number.isFinite(chartApiStraddle) ? chartApiStraddle : null;
+        if (!Number.isFinite(chartStraddlePrice)) {
+            chartStraddlePrice = Number.isFinite(socketStraddle) ? socketStraddle : null;
         }
-        if (Number.isFinite(straddlePrice)) {
-            lastKnownStraddlePrice = straddlePrice;
+        if (Number.isFinite(chartStraddlePrice)) {
+            lastKnownStraddlePrice = chartStraddlePrice;
         } else {
-            straddlePrice = lastKnownStraddlePrice;
+            chartStraddlePrice = lastKnownStraddlePrice;
         }
 
-        if (!Number.isFinite(netPnl) || !Number.isFinite(straddlePrice)) {
+        // Status bar Strangle Price remains position-based when available.
+        const statusStraddlePrice = Number.isFinite(statusApiStraddle) ? statusApiStraddle : chartStraddlePrice;
+
+        if (!Number.isFinite(netPnl) || !Number.isFinite(chartStraddlePrice)) {
             return;
         }
 
@@ -368,11 +376,11 @@ async function fetchPnl() {
         if (pnlData.pnlSeries.length > 0 && pnlData.pnlSeries[pnlData.pnlSeries.length - 1][0] === tsMinute) {
             // Update current minute's point
             pnlData.pnlSeries[pnlData.pnlSeries.length - 1][1] = netPnl;
-            pnlData.straddleSeries[pnlData.straddleSeries.length - 1][1] = straddlePrice;
+            pnlData.straddleSeries[pnlData.straddleSeries.length - 1][1] = chartStraddlePrice;
         } else {
             // New minute, add new point
             pnlData.pnlSeries.push([tsMinute, netPnl]);
-            pnlData.straddleSeries.push([tsMinute, straddlePrice]);
+            pnlData.straddleSeries.push([tsMinute, chartStraddlePrice]);
         }
 
         if (pnlData.pnlSeries.length > MAX_DATA_POINTS) {
@@ -381,7 +389,7 @@ async function fetchPnl() {
         }
 
         saveToLocalStorage();
-        updatePnLDisplay(json, netPnl, straddlePrice);
+        updatePnLDisplay(json, netPnl, statusStraddlePrice);
 
         if (!pendingChartUpdate) {
             pendingChartUpdate = true;
@@ -467,38 +475,106 @@ function buildLatestAnnotations() {
     return points;
 }
 
+function buildSparklinePath(values, width = 54, height = 20) {
+    if (!Array.isArray(values) || values.length === 0) {
+        return 'M1 15 L9 14 L17 10 L25 11 L33 7 L41 8 L53 3';
+    }
+    if (values.length === 1) {
+        return `M1 ${height / 2} L${width - 1} ${height / 2}`;
+    }
+
+    const min = Math.min(...values);
+    const max = Math.max(...values);
+    const range = max - min || 1;
+    const stepX = (width - 2) / (values.length - 1);
+    const points = values.map((value, index) => {
+        const x = 1 + (index * stepX);
+        const y = 2 + ((max - value) / range) * (height - 4);
+        return `${x.toFixed(2)} ${y.toFixed(2)}`;
+    });
+    return `M${points.join(' L')}`;
+}
+
+function getDeltaTone(deltaValue) {
+    if (!Number.isFinite(deltaValue)) return 'neutral';
+    if (deltaValue > 0.05) return 'positive';
+    if (deltaValue < -0.05) return 'negative';
+    return 'neutral';
+}
+
 function updatePnLDisplay(json, netPnl, straddlePrice) {
     const availableMargin = json.available_margin ?? 0;
-    document.getElementById("available-margin").textContent =
-        `Margin: ₹${formatIndianNumber(availableMargin)}`;
+    const availableMarginEl = document.getElementById("available-margin");
+    if (availableMarginEl) {
+        availableMarginEl.textContent = `Margin: ₹${formatIndianNumber(availableMargin)}`;
+    }
 
     const margin = json.margin;
-    const netPnlClass = netPnl === 0.0 ? 'neutral' : (netPnl > 0 ? 'positive' : 'negative');
     const marginRatio = margin !== 0 ? netPnl / margin : 0;
-    const marginClass = marginRatio === 0.0 ? 'neutral' : (marginRatio > 0 ? 'positive' : 'negative');
+    const pnlPercent = margin !== 0 ? (marginRatio * 100) : 0;
+    const netPnlClass = netPnl >= 0 ? 'positive' : 'negative';
+    const pnlSign = netPnl >= 0 ? '+' : '-';
+    const absPnl = Math.abs(netPnl);
+    const netPnlFormatted = `${pnlSign}₹${formatIndianNumber(absPnl).replace(/\.00$/, '')}`;
+    const pnlPercentFormatted = `${pnlSign}${Math.abs(pnlPercent).toFixed(1)}%`;
+    const netPnlDisplay = `${netPnlFormatted} (${pnlPercentFormatted})`;
+    const strangleDisplay = Number.isFinite(straddlePrice) ? `₹${formatIndianNumber(straddlePrice).replace(/\.00$/, '')}` : '₹0';
+    const deltaValue = Number.isFinite(Number(delta)) ? Number(delta) : null;
+    const deltaFormatted = deltaValue !== null ? deltaValue.toFixed(2) : '--';
+    const deltaTone = getDeltaTone(deltaValue);
+    const deltaOutlook = deltaTone === 'positive' ? 'Mild Bullish' : (deltaTone === 'negative' ? 'Mild Bearish' : 'Neutral');
 
-    const netPnlFormatted = `₹${formatIndianNumber(netPnl)}`;
-    const creditFormatted = json.Current_pos_credit !== null ?
-        `₹${formatIndianNumber(json.Current_pos_credit)}` : '₹0.00';
-    const pnlPercentFormatted = `${margin !== 0 ? (marginRatio * 100).toFixed(2) : '0.00'}%`;
-    const deltaFormatted = (typeof delta === 'number' && Number.isFinite(delta)) ? delta.toFixed(2) : '-';
+    const pnlValueEl = document.getElementById('status-net-pnl-value');
+    const pnlArrowEl = document.getElementById('status-pnl-arrow');
+    const pnlTooltipEl = document.getElementById('status-pnl-tooltip');
+    const strangleValueEl = document.getElementById('status-strangle-price');
+    const strangleTooltipEl = document.getElementById('status-strangle-tooltip');
+    const deltaValueEl = document.getElementById('status-delta-value');
+    const deltaTooltipEl = document.getElementById('status-delta-tooltip');
+    const sparklineEl = document.getElementById('status-sparkline');
+    const sparklinePathEl = document.getElementById('status-sparkline-path');
 
-    document.getElementById('net-pnl').innerHTML = `
-        <span class="pnl-group">
-            <span class="label">Net P&amp;L:</span>
-            <span id="pnl-combined" class="value ${netPnlClass}">${netPnlFormatted} 
-                <span class="${marginClass}">(${pnlPercentFormatted})</span>
-            </span>
-        </span>
-        <span class="credit-group">
-            <span class="label">Current Strangle Price:</span>
-            <span id="credit-value" class="value">${creditFormatted}</span>
-        </span>
-        <span class="delta-group">
-            <span class="label">Delta:</span>
-            <span id="delta-value" class="value">${deltaFormatted}</span>
-        </span>
-    `;
+    if (pnlValueEl) {
+        pnlValueEl.textContent = netPnlDisplay;
+        pnlValueEl.classList.remove('positive', 'negative');
+        pnlValueEl.classList.add(netPnlClass);
+    }
+    if (pnlArrowEl) {
+        pnlArrowEl.classList.remove('positive', 'negative');
+        pnlArrowEl.classList.add(netPnlClass);
+    }
+    if (pnlTooltipEl) {
+        pnlTooltipEl.setAttribute('data-tooltip', `Net Profit/Loss: ${netPnlFormatted} (${pnlPercentFormatted})`);
+    }
+    if (strangleValueEl) {
+        strangleValueEl.textContent = strangleDisplay;
+    }
+    if (strangleTooltipEl) {
+        const tooltipPrice = Number.isFinite(straddlePrice) ? Math.round(straddlePrice) : 0;
+        strangleTooltipEl.setAttribute('data-tooltip', `Current Strangle Price: ${tooltipPrice}`);
+    }
+    if (deltaValueEl) {
+        deltaValueEl.textContent = deltaFormatted;
+    }
+    if (deltaTooltipEl) {
+        deltaTooltipEl.setAttribute('data-tooltip', `Delta: ${deltaFormatted} (${deltaOutlook})`);
+    }
+    if (sparklineEl && sparklinePathEl) {
+        const recentPnl = pnlData.pnlSeries.slice(-7).map((point) => Number(point[1])).filter(Number.isFinite);
+        const minPointsForSparkline = 4;
+        const variationThreshold = 5;
+        const hasEnoughPoints = recentPnl.length >= minPointsForSparkline;
+        const hasVariation = hasEnoughPoints && (Math.max(...recentPnl) - Math.min(...recentPnl)) >= variationThreshold;
+
+        if (hasVariation) {
+            sparklinePathEl.setAttribute('d', buildSparklinePath(recentPnl));
+            sparklineEl.classList.remove('positive', 'negative');
+            sparklineEl.classList.add(netPnlClass);
+            sparklineEl.style.display = 'block';
+        } else {
+            sparklineEl.style.display = 'none';
+        }
+    }
 }
 
 // Update the chart options for better real-time visualization

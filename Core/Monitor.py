@@ -154,27 +154,6 @@ def ask_and_sleep_mac():
         print(f"⚠️ Could not display popup or sleep: {e}")
 
 
-# def get_last_sell_price(symbol):
-#     try:
-#         orders = kite.orders()
-#         sells = [
-#             o for o in orders
-#             if o["tradingsymbol"] == symbol
-#             and o["transaction_type"] == "SELL"
-#             and o["status"] == "COMPLETE"
-#         ]
-#         if sells:
-#             # Sort by order time descending, take latest
-#             sells = sorted(
-#                         sells,
-#                         key=lambda x: x.get("order_timestamp") or x.get("exchange_timestamp") or 0,
-#                         reverse=True)
-#             return sells[0]["average_price"]
-#     except Exception as e:
-#         print(f"⚠️ Error fetching last sell price for {symbol}: {e}")
-#     return None
-
-
 def cancel_all_sl_orders(fast=False):
     try:
         orders = kite.orders()
@@ -295,6 +274,56 @@ def _compute_target_strike(current_strike, opt_type, shift_steps, strike_step):
     if opt_type == "PE":
         return float(current_strike) - (shift_steps * strike_step)
     raise ValueError(f"Unsupported option type for shift: {opt_type}")
+
+
+def exit_position(pos, side=None, quantity=None):
+    try:
+        total_qty = abs(int(pos.get("quantity", 0)))
+        if total_qty <= 0:
+            return []
+
+        requested_qty = total_qty
+        if quantity is not None:
+            try:
+                requested_qty = int(quantity)
+            except (TypeError, ValueError):
+                print(f"❌ Invalid exit quantity for {pos.get('tradingsymbol')}: {quantity}")
+                return []
+            if requested_qty <= 0:
+                print(f"❌ Exit quantity must be positive for {pos.get('tradingsymbol')}: {requested_qty}")
+                return []
+            if requested_qty > total_qty:
+                print(f"❌ Exit quantity {requested_qty} exceeds open {total_qty} for {pos.get('tradingsymbol')}")
+                return []
+
+        freeze_limit = 1755
+
+        # Side is derived from current position direction to avoid accidental reversal.
+        side = "BUY" if int(pos.get("quantity", 0)) < 0 else "SELL"
+        order_ids = []
+
+        for i in range(0, requested_qty, freeze_limit):
+            chunk_qty = min(freeze_limit, requested_qty - i)
+
+            print(f"🔁 Exiting {pos['tradingsymbol']} with {side}, Qty={chunk_qty}")
+            start_ts = time.time()
+            order_id = kite.place_order(
+                exchange=pos["exchange"],
+                tradingsymbol=pos["tradingsymbol"],
+                transaction_type=side,
+                quantity=chunk_qty,
+                order_type="MARKET",
+                product=pos["product"],
+                variety="regular",
+                market_protection=-1
+            )
+            elapsed = time.time() - start_ts
+            print(f"✅ Exit order placed: {order_id} ({elapsed:.2f}s)")
+            order_ids.append(order_id)
+        return order_ids
+    except Exception as e:
+        print(f"❌ Error while exiting hedge {pos['tradingsymbol']}: {e}")
+        return []
 
 
 def _place_market_entry(order_template, quantity):
@@ -582,8 +611,7 @@ def has_existing_stoploss(kite, symbol, orders_cache=None):
 
 def place_stoploss_order(position, *, ltp=None, sl_trigger_price=None, fast=False):
     
-    # last_sell_price = get_last_sell_price(position["tradingsymbol"])    
-    # print(f"💰 Last sell price for {position['tradingsymbol']}: {last_sell_price}")
+
 
     stoploss_point = 9 # Adjust this value as needed
 
@@ -600,12 +628,6 @@ def place_stoploss_order(position, *, ltp=None, sl_trigger_price=None, fast=Fals
             sl_trigger_price = round(ltp + ltp / 4, 1)  # Placing SL at 25% above current LTP
         else:
             sl_trigger_price = round(position['average_price'] + stoploss_point, 1)
-    # if last_sell_price is None:
-    #     print(f"❌ Last sell price not found for {position['tradingsymbol']}, using average price")
-    #     sl_trigger_price = round(position['average_price']+stoploss_point ,1)
-    # else:    
-    #     sl_trigger_price = round(last_sell_price + stoploss_point, 1)
-
 
     total_qty = abs(position["quantity"])
 
@@ -746,56 +768,6 @@ def stoploss_order_button():
 
 
 
-def exit_position(pos, side=None, quantity=None):
-    try:
-        total_qty = abs(int(pos.get("quantity", 0)))
-        if total_qty <= 0:
-            return []
-
-        requested_qty = total_qty
-        if quantity is not None:
-            try:
-                requested_qty = int(quantity)
-            except (TypeError, ValueError):
-                print(f"❌ Invalid exit quantity for {pos.get('tradingsymbol')}: {quantity}")
-                return []
-            if requested_qty <= 0:
-                print(f"❌ Exit quantity must be positive for {pos.get('tradingsymbol')}: {requested_qty}")
-                return []
-            if requested_qty > total_qty:
-                print(f"❌ Exit quantity {requested_qty} exceeds open {total_qty} for {pos.get('tradingsymbol')}")
-                return []
-
-        freeze_limit = 1755
-
-        # Side is derived from current position direction to avoid accidental reversal.
-        side = "BUY" if int(pos.get("quantity", 0)) < 0 else "SELL"
-        order_ids = []
-
-        for i in range(0, requested_qty, freeze_limit):
-            chunk_qty = min(freeze_limit, requested_qty - i)
-
-            print(f"🔁 Exiting {pos['tradingsymbol']} with {side}, Qty={chunk_qty}")
-            start_ts = time.time()
-            order_id = kite.place_order(
-                exchange=pos["exchange"],
-                tradingsymbol=pos["tradingsymbol"],
-                transaction_type=side,
-                quantity=chunk_qty,
-                order_type="MARKET",
-                product=pos["product"],
-                variety="regular",
-                market_protection=-1
-            )
-            elapsed = time.time() - start_ts
-            print(f"✅ Exit order placed: {order_id} ({elapsed:.2f}s)")
-            order_ids.append(order_id)
-        return order_ids
-    except Exception as e:
-        print(f"❌ Error while exiting hedge {pos['tradingsymbol']}: {e}")
-        return []
-
-
 
 def calculate_pnl(positions):
     try:
@@ -833,33 +805,6 @@ def calculate_pnl(positions):
         print(f"❌ Error in calculate_pnl: {e}")
         return 0, 0
 
-# def group_spreads(positions):
-#     """
-#     Groups each short option (primary) with the closest matching long (hedge)
-#     based on same type (CE/PE) and expiry, using closest strike match.
-#     Returns one spread per short leg.
-#     """
-#     primary_legs = [p for p in positions if p['quantity'] < 0 and p['tradingsymbol'].endswith(("CE", "PE")) and p['exchange'] in ('BFO','NFO')]
-#     hedge_legs = [p for p in positions if p['quantity'] > 0 and p['tradingsymbol'].endswith(("CE", "PE")) and p['exchange'] in ('BFO','NFO')]
-#     used_hedges = set()
-#     spreads = []
-
-#     for primary in primary_legs:
-#         leg_type = "CE" if primary["tradingsymbol"].endswith("CE") else "PE"
-
-#         # Find up to 2 unused hedges of the same type
-#         candidates = [
-#             h for h in hedge_legs
-#             if h["tradingsymbol"].endswith(leg_type)
-#             and h["tradingsymbol"] not in used_hedges
-#         ] 
-
-#         for h in candidates:
-#             used_hedges.add(h["tradingsymbol"])
-
-#         spreads.append({"primary": [primary], "hedge": candidates})
-    
-#     return spreads
 
 def Exiting_position(positions):
     # This Function is called when Button is pressed to exit all positions at once, it will first exit all short legs and then long legs with concurrency to speed up the process.
@@ -979,156 +924,6 @@ def monitor_spreads():
     while True:       
         try:
             positions = kite.positions()["net"]
-            # option_positions = [p for p in positions if p["quantity"] != 0 and p["tradingsymbol"].endswith(("CE", "PE")) and p['exchange'] in ('BFO','NFO')]
-            # spreads = group_spreads(option_positions)
-        
-            # # Your existing monitoring code here
-            # for spread in spreads:
-            #     primary_legs = spread["primary"]
-            #     hedge_legs = spread["hedge"]
-
-            #     # Check if SL already placed for all primary legs
-            #     all_primary_symbols = [leg["tradingsymbol"] for leg in primary_legs]
-            #     sl_already_placed = all(symbol in placed_sl_orders for symbol in all_primary_symbols)
-
-            #     if sl_already_placed:
-            #         # Check if any quantity changed for any leg
-            #         quantity_changed = False
-            #         for leg in primary_legs:
-            #             sl_data = placed_sl_orders.get(leg["tradingsymbol"], {})
-            #             prev_qty = sl_data.get("qty")
-            #             if abs(leg["quantity"]) != prev_qty:
-            #                 quantity_changed = True
-            #                 break
-
-            #         if quantity_changed:
-            #             print(f"🔄 Quantity changed for one or more legs in {all_primary_symbols}. Updating SL...")
-
-            #             # Place new SL for updated quantities with updating flag and cancel logic
-            #             for leg in primary_legs:
-            #                 symbol = leg["tradingsymbol"]
-
-            #                 sl_data = placed_sl_orders.get(symbol, {})
-            #                 # Skip if recently updated within 2 seconds
-            #                 if time.time() - sl_data.get("last_updated", 0) < 2:
-            #                     continue
-
-            #                 if sl_data.get("updating"):
-            #                     continue
-
-            #                 placed_sl_orders[symbol]["updating"] = True
-
-            #                 try:
-            #                     sl_data = placed_sl_orders[symbol]
-            #                     order_ids = sl_data.get("order_id", [])
-            #                     for oid in order_ids:
-            #                         try:
-            #                             kite.cancel_order(order_id=oid, variety="regular")
-            #                             print(f"❌ Cancelled outdated SL order {oid} for {symbol}")
-            #                             beep()
-            #                         except Exception as e:
-            #                             print(f"⚠️ Error cancelling outdated SL {oid} for {symbol}: {e}")
-
-            #                     new_order_ids = place_stoploss_order(leg)
-            #                     if new_order_ids:
-            #                         placed_sl_orders[symbol]["order_id"] = new_order_ids
-            #                         placed_sl_orders[symbol]["qty"] = abs(leg["quantity"])
-            #                         placed_sl_orders[symbol]["last_updated"] = time.time()
-            #                 finally:
-            #                     placed_sl_orders[symbol]["updating"] = False
-                        
-            #         # Update hedge if new hedge was added
-            #         for leg in primary_legs:
-            #             ts = leg["tradingsymbol"]
-            #             tracked_hedges = {h["tradingsymbol"] for h in placed_sl_orders.get(ts,{}).get("hedge",[])}
-            #             current_hedges = {h["tradingsymbol"] for h in hedge_legs}
-            #             if current_hedges != tracked_hedges:
-            #                 print(f"🧩 New hedge detected for {leg['tradingsymbol']}. Updating...")
-            #                 placed_sl_orders[leg["tradingsymbol"]]["hedge"] = hedge_legs
-
-            #     else:
-            #         # Place SL orders for legs not yet placed
-            #         for leg in primary_legs:
-            #             symbol = leg["tradingsymbol"]
-
-            #             if symbol in placed_sl_orders:
-            #                 continue  # Already tracked
-
-            #             print(f"📌 Checking SL for {symbol}")
-            #             existing_order_id = has_existing_stoploss(kite, symbol)
-
-            #             if existing_order_id:
-            #                 print(f"⏳ SL already exists for {symbol}, tracking it...")
-            #                 placed_sl_orders[symbol] = {
-            #                     "order_id": [existing_order_id],
-            #                     "hedge": hedge_legs,
-            #                     "qty": abs(leg["quantity"])
-            #                 }
-            #             else:
-            #                 sl_data = placed_sl_orders.get(symbol, {})
-            #                 # Skip if recently updated
-            #                 if time.time() - sl_data.get("last_updated", 0) < 2:
-            #                     continue
-
-            #                 placed_sl_orders[symbol] = {
-            #                     "order_id": [],
-            #                     "hedge": hedge_legs,
-            #                     "qty": abs(leg["quantity"]),
-            #                     "updating": True
-            #                 }
-
-            #                 try:
-            #                     sl_order_ids = place_stoploss_order(leg)
-            #                     if sl_order_ids:
-            #                         placed_sl_orders[symbol]["order_id"] = sl_order_ids
-            #                         placed_sl_orders[symbol]["last_updated"] = time.time()
-            #                         print(f"✅ Placed SL for {symbol}: {sl_order_ids}")
-            #                     else:
-            #                         print(f"⚠️ Failed to place SL for {symbol}. It is NOT protected right now.")
-            #                         placed_sl_orders.pop(symbol)
-            #                 finally:
-            #                     if symbol in placed_sl_orders:
-            #                         placed_sl_orders[symbol].pop("updating", None)
-
-            # for symbol, data in list(placed_sl_orders.items()):
-            #     order_ids = data["order_id"] #SL order IDs
-            #     hedge_legs = data["hedge"]
-
-            #     # Refresh position data for primary leg
-            #     current_primary = next((p for p in positions if p["tradingsymbol"] == symbol), None)
-
-            #     if current_primary and current_primary["quantity"] == 0:
-            #         orders = kite.orders()
-            #         print(f"🎯 Primary {symbol} closed manually. Cleaning up...")
-
-            #         # Cancel SL order if still pending
-            #         for oid in order_ids:
-            #             for o in orders:
-            #                 if o["order_id"] == oid and o["status"] in ["OPEN", "TRIGGER PENDING"]:
-            #                     try:
-            #                         kite.cancel_order(order_id=oid, variety="regular")
-            #                         print(f"❌ Cancelled SL order {oid} for {symbol}")
-            #                         beep()
-            #                     except Exception as e:
-            #                         print(f"⚠️ Error cancelling SL order {oid} for {symbol}: {e}")
-            #                     break
-
-            #         # --- Future logic: Exit only the hedge legs associated with this primary leg, matching type (CE/PE)
-            #         # associated_hedges = data["hedge"]
-            #         # # Determine if primary is CE or PE
-            #         # primary_type = "CE" if symbol.endswith("CE") else "PE"
-            #         #
-            #         # for hedge_leg in associated_hedges:
-            #         #     if hedge_leg["tradingsymbol"].endswith(primary_type):
-            #         #         latest = next((p for p in positions if p["tradingsymbol"] == hedge_leg["tradingsymbol"]), None)
-            #         #         if latest and latest["quantity"] != 0:
-            #         #             exit_position(latest, "SELL")
-
-            #         placed_sl_orders.pop(symbol)
-
-            # t = time.time()
-            # fmt = time.localtime(t)     
-            # strf = time.strftime("%D %T", fmt)
             global pnl_total, Current_pos_credit, available_margin
             
             # Update margin every 2 seconds
@@ -1139,15 +934,16 @@ def monitor_spreads():
             
             pnl_total, Current_pos_credit = calculate_pnl(positions)
             
-            # if pnl_total <= threshold:
-            #     if threshold_breach_start is None:
-            #         threshold_breach_start = current_time
-            #     elif current_time - threshold_breach_start >= 2:
-            #         if account_close ==False:
-            #             Exiting_closing_account(positions)
-            #             account_close = True
-            # else:
-            #     threshold_breach_start = None
+            if pnl_total <= threshold:
+                if threshold_breach_start is None:
+                    threshold_breach_start = current_time
+                elif current_time - threshold_breach_start >= 2:
+                    if account_close ==False:
+                        Exiting_closing_account(positions)
+                        account_close = True
+            else:
+                threshold_breach_start = None
+            
             routine_close()
             time.sleep(.2)  # Standard monitoring interval
         except Exception as e:
