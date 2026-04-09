@@ -52,13 +52,15 @@ spot_token = INDEX_CONFIG[selected_index_key]["spot_token"]
 strike_step = INDEX_CONFIG[selected_index_key]["strike_step"]
 strike_prices = []
 option_tokens = {}
+option_meta_by_symbol = {}
+instrument_lookup_by_exchange = {}
 subscribed_tokens = []
 
 stradle_price =0
 
 
 def _configure_index_data(index_key):
-    global selected_index_key, spot_token, strike_step, option_tokens, strike_prices, live_data
+    global selected_index_key, spot_token, strike_step, option_tokens, strike_prices, live_data, option_meta_by_symbol, instrument_lookup_by_exchange
 
     normalized_index_key = (index_key or "").strip().lower()
     if normalized_index_key not in INDEX_CONFIG:
@@ -87,14 +89,82 @@ def _configure_index_data(index_key):
             "strike": inst["strike"],
             "type": inst["instrument_type"],
             "expiry": inst["expiry"],
+            "exchange": inst["exchange"],
+            "instrument_token": inst["instrument_token"],
         }
         for inst in nearest_expiry_options
+    }
+    # Keep metadata for all expiries so current open positions can still compute delta.
+    option_meta_by_symbol = {
+        inst["tradingsymbol"]: {
+            "tradingsymbol": inst["tradingsymbol"],
+            "strike": inst["strike"],
+            "type": inst["instrument_type"],
+            "expiry": inst["expiry"],
+            "exchange": inst["exchange"],
+            "instrument_token": inst["instrument_token"],
+        }
+        for inst in filtered_options
     }
 
     selected_index_key = normalized_index_key
     spot_token = cfg["spot_token"]
     strike_step = cfg["strike_step"]
     live_data = {}
+    instrument_lookup_by_exchange = {}
+
+
+def _build_exchange_option_lookup(exchange):
+    exchange_norm = str(exchange or "").strip().upper()
+    if not exchange_norm:
+        return {}
+
+    if exchange_norm in instrument_lookup_by_exchange:
+        return instrument_lookup_by_exchange[exchange_norm]
+
+    lookup = {}
+    try:
+        instruments = kite.instruments(exchange_norm)
+        for inst in instruments:
+            inst_type = str(inst.get("instrument_type", "")).upper()
+            symbol = inst.get("tradingsymbol")
+            if inst_type not in ("CE", "PE") or not symbol:
+                continue
+            lookup[symbol] = {
+                "tradingsymbol": symbol,
+                "strike": inst.get("strike"),
+                "type": inst_type,
+                "expiry": inst.get("expiry"),
+                "exchange": inst.get("exchange"),
+                "instrument_token": inst.get("instrument_token"),
+            }
+    except Exception as e:
+        print(f"⚠️ Unable to build option lookup for {exchange_norm}: {e}")
+        lookup = {}
+
+    instrument_lookup_by_exchange[exchange_norm] = lookup
+    return lookup
+
+
+def _resolve_option_details_for_position(pos, token_int):
+    symbol = pos.get('tradingsymbol')
+    exchange = pos.get('exchange')
+
+    if token_int is not None:
+        details = option_tokens.get(token_int)
+        if details:
+            return details
+
+    details = option_meta_by_symbol.get(symbol)
+    if details:
+        return details
+
+    exchange_lookup = _build_exchange_option_lookup(exchange)
+    details = exchange_lookup.get(symbol)
+    if details:
+        # Seed global map so future loops are faster.
+        option_meta_by_symbol[symbol] = details
+    return details
 
 
 def _resubscribe_for_current_index():
@@ -190,6 +260,7 @@ def get_delta_from_position(options_data, future_price):
     total_delta = 0.0
     try:
         positions = kite.positions()['net']
+        ltp_fallback_cache = {}
         for pos in positions:
             # Skip if not an option position or zero quantity
             if not pos['tradingsymbol'].endswith(('CE', 'PE')) or pos['quantity'] == 0 or pos['exchange'] not in ('BFO','NFO'):
@@ -202,16 +273,46 @@ def get_delta_from_position(options_data, future_price):
             #     continue
                 
             # ... existing fallback calculation code ...
-            opt_details = option_tokens.get(pos['instrument_token'])
-            if not opt_details or pos['instrument_token'] not in live_data:
-                print(f"⚠️ Can't compute delta for {pos['tradingsymbol']}, missing data.")
+            symbol = pos.get('tradingsymbol')
+            token = pos.get('instrument_token')
+            token_int = None
+            try:
+                token_int = int(token) if token is not None else None
+            except (TypeError, ValueError):
+                token_int = None
+
+            opt_details = _resolve_option_details_for_position(pos, token_int)
+            if not opt_details:
+                print(f"⚠️ Can't compute delta for {symbol}, metadata not found.")
                 continue
 
-            ltp = live_data[pos['instrument_token']]
+            # Prefer websocket tick, then fallback to quote pull.
+            ltp = None
+            token_from_meta = opt_details.get("instrument_token")
+            if token_int is not None and token_int in live_data:
+                ltp = live_data[token_int]
+            elif token_from_meta in live_data:
+                ltp = live_data[token_from_meta]
+            else:
+                ltp_key = f"{pos.get('exchange')}:{symbol}"
+                if ltp_key not in ltp_fallback_cache:
+                    try:
+                        ltp_payload = kite.ltp(ltp_key)
+                        ltp_fallback_cache[ltp_key] = ltp_payload.get(ltp_key, {}).get("last_price")
+                    except Exception:
+                        ltp_fallback_cache[ltp_key] = None
+                ltp = ltp_fallback_cache.get(ltp_key)
+
+            if ltp is None or ltp <= 0:
+                print(f"⚠️ Can't compute delta for {symbol}, LTP unavailable.")
+                continue
+
             strike = opt_details['strike']
             opt_type = opt_details['type']
             expiry_datetime = datetime.combine(opt_details["expiry"], dt.time(15, 30))
             T = (expiry_datetime - datetime.now()).total_seconds() / (365 * 24 * 60 * 60)
+            if T <= 0:
+                continue
             option_type = 'call' if opt_type == 'CE' else 'put'
             if future_price is None or future_price <= 0:
                 continue

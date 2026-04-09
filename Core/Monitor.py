@@ -371,6 +371,36 @@ def _resolve_open_position(open_positions, symbol, exchange=""):
     return candidates[0] if len(candidates) == 1 else None
 
 
+def _wait_for_position_reduction(symbol, exchange, target_abs_qty=0, timeout_sec=1.8, poll_interval_sec=0.1):
+    """
+    Wait until open quantity for a symbol/exchange is reduced to target_abs_qty or below.
+    Keeps shift fast by using short polling and short timeout.
+    """
+    deadline = time.time() + max(0.2, float(timeout_sec))
+    target_abs_qty = max(0, int(target_abs_qty))
+    exchange_norm = str(exchange or "").strip().upper()
+
+    while time.time() <= deadline:
+        try:
+            open_positions = _open_option_positions_snapshot()
+            matched = _resolve_open_position(open_positions, symbol, exchange=exchange_norm)
+            current_abs_qty = abs(int(matched.get("quantity", 0))) if matched else 0
+            if current_abs_qty <= target_abs_qty:
+                return True, current_abs_qty
+        except Exception:
+            # Keep polling briefly; transient position fetch issues can occur.
+            pass
+        time.sleep(max(0.05, float(poll_interval_sec)))
+
+    try:
+        open_positions = _open_option_positions_snapshot()
+        matched = _resolve_open_position(open_positions, symbol, exchange=exchange_norm)
+        current_abs_qty = abs(int(matched.get("quantity", 0))) if matched else 0
+    except Exception:
+        current_abs_qty = None
+    return False, current_abs_qty
+
+
 def get_open_option_positions():
     option_positions = _open_option_positions_snapshot()
 
@@ -468,6 +498,15 @@ def shift_selected_legs(selected_legs, shift_steps):
             exit_order_ids = exit_position(pos, quantity=abs(pos_qty))
             if not exit_order_ids:
                 raise RuntimeError("Square off failed")
+            squared_off, remaining_qty = _wait_for_position_reduction(
+                pos_symbol,
+                pos_exchange,
+                target_abs_qty=0,
+            )
+            if not squared_off:
+                raise RuntimeError(
+                    f"Square off not confirmed before re-entry (remaining qty: {remaining_qty})"
+                )
 
             entry_qty = abs(pos_qty)
             requested_new_qty = leg.get("new_qty")

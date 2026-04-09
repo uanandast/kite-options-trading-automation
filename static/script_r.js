@@ -249,6 +249,24 @@ function syncTopBarFromStraddle(priceNum) {
     if (highInlineEl) highInlineEl.textContent = `₹${formatIndianNumber(observedStraddleHigh).replace(/\.00$/, '')}`;
 }
 
+function resetIndexScopedStraddleStats() {
+    observedStraddleLow = null;
+    observedStraddleHigh = null;
+    currentStraddlePrice = null;
+    lastRenderedStraddlePrice = null;
+    lastKnownStraddlePrice = 0;
+
+    const lowInlineEl = document.getElementById('top-straddle-low-inline');
+    const highInlineEl = document.getElementById('top-straddle-high-inline');
+    const strangleEl = document.getElementById('status-strangle-price');
+    const statusStrangleEl = document.getElementById('status-left-strangle');
+
+    if (lowInlineEl) lowInlineEl.textContent = '--';
+    if (highInlineEl) highInlineEl.textContent = '--';
+    if (strangleEl) strangleEl.textContent = '--';
+    if (statusStrangleEl) statusStrangleEl.textContent = '--';
+}
+
 function updateTopTimestamp() {
     const updatedEl = document.getElementById('top-updated-time');
     if (!updatedEl) return;
@@ -471,7 +489,13 @@ async function fetchOptionData() {
         const spotPrice = Number(json.spot_price);
         const previousClose = Number(json.previous_close);
         if (json.selected_index) {
-            currentSelectedIndex = String(json.selected_index).toLowerCase();
+            const incomingIndex = String(json.selected_index).toLowerCase();
+            if (incomingIndex !== currentSelectedIndex) {
+                currentSelectedIndex = incomingIndex;
+                resetIndexScopedStraddleStats();
+            } else {
+                currentSelectedIndex = incomingIndex;
+            }
         }
         updateSpotDisplay(json.spot_price, json.previous_close);
         const symbolEl = document.getElementById('symbol');
@@ -745,7 +769,6 @@ function updatePnLDisplay(json, netPnl, straddlePrice) {
     const margin = json.margin;
     const marginRatio = margin !== 0 ? netPnl / margin : 0;
     const pnlPercent = margin !== 0 ? (marginRatio * 100) : 0;
-    const netPnlClass = netPnl >= 0 ? 'positive' : 'negative';
     const pnlSign = netPnl >= 0 ? '+' : '-';
     const absPnl = Math.abs(netPnl);
     const netPnlFormatted = `${pnlSign}₹${formatIndianNumber(absPnl).replace(/\.00$/, '')}`;
@@ -772,12 +795,12 @@ function updatePnLDisplay(json, netPnl, straddlePrice) {
 
     if (pnlValueEl) {
         pnlValueEl.textContent = netPnlDisplay;
-        pnlValueEl.classList.remove('positive', 'negative');
-        pnlValueEl.classList.add(netPnlClass);
+        pnlValueEl.classList.remove('positive', 'negative', 'text-emerald-400', 'text-rose-500');
+        pnlValueEl.classList.add(netPnl >= 0 ? 'text-emerald-400' : 'text-rose-500');
     }
     if (pnlArrowEl) {
         pnlArrowEl.classList.remove('positive', 'negative');
-        pnlArrowEl.classList.add(netPnlClass);
+        pnlArrowEl.classList.add(netPnl >= 0 ? 'positive' : 'negative');
     }
     if (pnlTooltipEl) {
         pnlTooltipEl.setAttribute('data-tooltip', `Net Profit/Loss: ${netPnlFormatted} (${pnlPercentFormatted})`);
@@ -847,7 +870,7 @@ function updatePnLDisplay(json, netPnl, straddlePrice) {
         if (hasVariation) {
             sparklinePathEl.setAttribute('d', buildSparklinePath(recentPnl));
             sparklineEl.classList.remove('positive', 'negative');
-            sparklineEl.classList.add(netPnlClass);
+            sparklineEl.classList.add(netPnl >= 0 ? 'positive' : 'negative');
             sparklineEl.style.display = 'block';
         } else {
             sparklineEl.style.display = 'none';
@@ -1167,14 +1190,60 @@ function renderOpenOptionPositions() {
         return;
     }
 
+    const parseLegDisplayParts = (tradingsymbol = '', exchange = '') => {
+        const raw = String(tradingsymbol || '').toUpperCase();
+        const knownPrefixes = ['BANKNIFTY', 'SENSEX', 'NIFTY'];
+        const indexName = knownPrefixes.find((prefix) => raw.startsWith(prefix)) || String(exchange || '').toUpperCase() || 'INDEX';
+        const typeMatch = raw.match(/(CE|PE)$/);
+        const optionType = typeMatch ? typeMatch[1] : '--';
+        const numericTail = raw
+            .replace(indexName, '')
+            .replace(/(CE|PE)$/, '')
+            .replace(/\D/g, '');
+
+        const strikeStep = STRIKE_STEP_BY_INDEX[String(indexName || '').toLowerCase()] || 100;
+        const minStrikeByIndex = {
+            NIFTY: 10000,
+            BANKNIFTY: 20000,
+            SENSEX: 30000
+        };
+        const maxStrikeByIndex = {
+            NIFTY: 50000,
+            BANKNIFTY: 90000,
+            SENSEX: 120000
+        };
+        const minStrike = minStrikeByIndex[indexName] || 1000;
+        const maxStrike = maxStrikeByIndex[indexName] || 200000;
+
+        let strikeValue = null;
+        for (let len = 4; len <= Math.min(7, numericTail.length); len += 1) {
+            const suffix = numericTail.slice(-len);
+            const candidate = Number.parseInt(suffix, 10);
+            if (!Number.isFinite(candidate)) continue;
+            if (candidate < minStrike || candidate > maxStrike) continue;
+            if (candidate % strikeStep !== 0) continue;
+            strikeValue = candidate;
+            break;
+        }
+        if (!Number.isFinite(strikeValue) && numericTail.length > 0) {
+            strikeValue = Number.parseInt(numericTail.slice(-5), 10);
+        }
+
+        return {
+            indexName,
+            strikeLabel: Number.isFinite(strikeValue) ? String(strikeValue) : '--',
+            optionType
+        };
+    };
+
     const rows = openOptionPositions.map((leg) => {
         const key = `${leg.exchange}::${leg.tradingsymbol}`;
         const prev = prevState[key] || {};
         const checked = prev.checked ? 'checked' : '';
         const currentQty = Math.abs(Number(leg.quantity || 0));
         const isShort = String(leg.side || '').toUpperCase() === 'SHORT';
-        const sideClass = isShort ? 'short' : 'long';
         const sideLabel = isShort ? 'SHORT' : 'LONG';
+        const display = parseLegDisplayParts(leg.tradingsymbol, leg.exchange);
 
         return `
             <div class="shift-leg-item flex items-center gap-2 rounded border border-slate-800 bg-slate-900 px-2 py-1.5 text-xs">
@@ -1189,7 +1258,7 @@ function renderOpenOptionPositions() {
                     ${checked}
                 />
                 <span class="shift-leg-symbol flex-1 truncate font-mono text-slate-200" title="${escapeHtml(leg.tradingsymbol)}">
-                    ${escapeHtml(leg.tradingsymbol)}
+                    ${escapeHtml(display.indexName)} | ${escapeHtml(display.strikeLabel)} | ${escapeHtml(display.optionType)}
                 </span>
                 <span class="shift-leg-side rounded px-1.5 py-0.5 text-[10px] font-semibold ${isShort ? 'bg-rose-900/80 text-rose-200' : 'bg-emerald-900/70 text-emerald-200'}">${sideLabel}</span>
                 <span class="shift-leg-qty-label font-mono text-slate-400">x${currentQty}</span>
@@ -1252,7 +1321,7 @@ function getSelectedLegsFromList() {
 
 function getGlobalNewQtyIfEnabled() {
     const useQtyCheckbox = document.getElementById('shift-use-qty');
-    const qtyInput = document.getElementById('shift-qty-input');
+    const qtyInput = document.getElementById('qty-input');
     if (!useQtyCheckbox || !qtyInput || !useQtyCheckbox.checked) {
         return null;
     }
@@ -1399,6 +1468,7 @@ async function loadIndexOptions() {
         }
         currentSelectedIndex = String(payload.selected || 'nifty').toLowerCase();
         indexSelect.value = currentSelectedIndex;
+        resetIndexScopedStraddleStats();
         applyIndexQtyRules(currentSelectedIndex, true);
     } catch (error) {
         console.error('Error loading index options:', error);
@@ -1426,6 +1496,7 @@ async function handleIndexChange(event) {
         }
         currentSelectedIndex = String(payload.selected || requestedIndex).toLowerCase();
         indexSelect.value = currentSelectedIndex;
+        resetIndexScopedStraddleStats();
         applyIndexQtyRules(currentSelectedIndex, true);
         showToast('Complete', payload.message || 'Index switched');
         fetchOptionData();
@@ -1464,12 +1535,11 @@ document.addEventListener('DOMContentLoaded', () => {
         shiftExitSelectedButton.addEventListener('click', exitSelectedLegs);
     }
     const useQtyCheckbox = document.getElementById('shift-use-qty');
-    const shiftQtyInput = document.getElementById('shift-qty-input');
     const qtyInput = document.getElementById('qty-input');
     const strikesInput = document.getElementById('strikes-input');
-    if (useQtyCheckbox && shiftQtyInput) {
+    if (useQtyCheckbox && qtyInput) {
         const syncQtyEnabledState = () => {
-            shiftQtyInput.disabled = !useQtyCheckbox.checked;
+            qtyInput.disabled = !useQtyCheckbox.checked;
         };
         useQtyCheckbox.addEventListener('change', syncQtyEnabledState);
         syncQtyEnabledState();
