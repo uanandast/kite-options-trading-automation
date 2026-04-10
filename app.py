@@ -183,7 +183,7 @@ def update_iron_condor_data():
     while True:
         try:
             with index_update_lock:
-                result, net_delta, options_data, strangle_credit, future_price, Skew,delta,spot_price = get_current_iron_condor()
+                result, net_delta, options_data, strangle_credit, future_price, Skew, delta, spot_price, atm_strike = get_current_iron_condor()
 
             latest_iron_condor_data = {
                 'legs': result,
@@ -193,7 +193,8 @@ def update_iron_condor_data():
                 'future_price': future_price,
                 'skew': Skew,
                 'delta':delta, # from current position
-                'spot_price': spot_price
+                'spot_price': spot_price,
+                'atm_strike': atm_strike
 
             }
             time.sleep(refresh_interval_seconds)
@@ -531,4 +532,4 @@ if __name__ == '__main__':
     thread1.start()
     thread2 = Thread(target=monitor_spreads_loop, daemon=True)
     thread2.start()
-    app.run(debug=False, port=5000)
+    app.run(debug=True, port=5000)

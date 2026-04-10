@@ -4,8 +4,8 @@ const CHART_UPDATE_INTERVAL = 1000; // 1 second
 const MAX_DATA_POINTS = 3600; // 60 hours at 1 minute interval
 const ANIMATION_DURATION = 350; // milliseconds
 
-let straddlePriceFromSocket = 0;
-let lastKnownStraddlePrice = 0;
+let straddlePriceFromSocket = null;
+let lastKnownStraddlePrice = null;
 let currentStraddlePrice = null;
 let lastRenderedStraddlePrice = null;
 let pendingChartUpdate = false;
@@ -33,6 +33,11 @@ const INDEX_LOT_QTY = {
 
 function isValidNumber(value) {
     return typeof value === 'number' && Number.isFinite(value);
+}
+
+function toFiniteNumber(value) {
+    const parsed = typeof value === 'number' ? value : Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
 }
 
 function formatRupeeCompact(value) {
@@ -254,7 +259,8 @@ function resetIndexScopedStraddleStats() {
     observedStraddleHigh = null;
     currentStraddlePrice = null;
     lastRenderedStraddlePrice = null;
-    lastKnownStraddlePrice = 0;
+    lastKnownStraddlePrice = null;
+    straddlePriceFromSocket = null;
 
     const lowInlineEl = document.getElementById('top-straddle-low-inline');
     const highInlineEl = document.getElementById('top-straddle-high-inline');
@@ -276,14 +282,15 @@ function updateTopTimestamp() {
 function setVitalValue(cardId, valueId, valueText, isAvailable = true) {
     const card = document.getElementById(cardId);
     const valueEl = document.getElementById(valueId);
-    if (!card || !valueEl) return;
+    if (!valueEl) return;
 
     if (!isAvailable) {
-        card.classList.add('is-hidden');
+        if (card) card.classList.add('is-hidden');
+        valueEl.textContent = '--';
         return;
     }
 
-    card.classList.remove('is-hidden');
+    if (card) card.classList.remove('is-hidden');
     valueEl.textContent = valueText;
 }
 
@@ -512,10 +519,7 @@ async function fetchOptionData() {
         );
         }
 
-        const strikeStep = STRIKE_STEP_BY_INDEX[currentSelectedIndex] || null;
-        const atmStrike = (strikeStep && Number.isFinite(spotPrice))
-            ? Math.round(spotPrice / strikeStep) * strikeStep
-            : null;
+        const atmStrike = toFiniteNumber(json.atm_strike);
         updateTopCockpit(json, atmStrike);
         updateSpotDisplay(spotPrice, previousClose);
         // Keep top-bar price stable from position PnL feed to avoid flicker.
@@ -610,7 +614,7 @@ async function fetchPnl() {
         }
         if (Number.isFinite(chartStraddlePrice)) {
             lastKnownStraddlePrice = chartStraddlePrice;
-        } else {
+        } else if (Number.isFinite(lastKnownStraddlePrice)) {
             chartStraddlePrice = lastKnownStraddlePrice;
         }
 
@@ -772,7 +776,7 @@ function updatePnLDisplay(json, netPnl, straddlePrice) {
     const pnlSign = netPnl >= 0 ? '+' : '-';
     const absPnl = Math.abs(netPnl);
     const netPnlFormatted = `${pnlSign}₹${formatIndianNumber(absPnl).replace(/\.00$/, '')}`;
-    const pnlPercentFormatted = `${pnlSign}${Math.abs(pnlPercent).toFixed(1)}%`;
+    const pnlPercentFormatted = `${pnlSign}${Math.abs(pnlPercent).toFixed(2)}%`;
     const netPnlDisplay = `${netPnlFormatted} (${pnlPercentFormatted})`;
     const strangleDisplay = formatRupeeCompact(straddlePrice);
     const deltaValue = Number.isFinite(Number(delta)) ? Number(delta) : null;

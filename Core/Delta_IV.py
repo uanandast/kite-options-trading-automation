@@ -496,7 +496,7 @@ def on_ticks(ws, ticks):
 
 def get_current_iron_condor():
     if spot_token not in live_data:
-        return {}, None, [], None, None, None, None, None
+        return {}, None, [], None, None, None, None, None, None
 
     now = datetime.now()
     r = 0.08  # risk-free rate
@@ -505,7 +505,7 @@ def get_current_iron_condor():
     
 
     if not strike_prices:
-        return {}, None, [], None, None, None, None, spot_price
+        return {}, None, [], None, None, None, None, spot_price, None
     try:
         atm_index = strike_prices.index(atm_strike)
     except ValueError:
@@ -519,7 +519,7 @@ def get_current_iron_condor():
     ce_atm_ltp = live_data.get(ce_atm_ltp)
     pe_atm_ltp = live_data.get(pe_atm_ltp)
     if ce_atm_ltp is None or pe_atm_ltp is None:
-        return {}, None, [], None, None, None, None, spot_price
+        return {}, None, [], None, None, None, None, spot_price, atm_strike
 
     future_price = atm_strike+(ce_atm_ltp-pe_atm_ltp) if ce_atm_ltp and pe_atm_ltp else None
 
@@ -534,7 +534,7 @@ def get_current_iron_condor():
     ce_fut_atm_ltp = live_data.get(ce_fut_atm_ltp)
     pe_fut_atm_ltp = live_data.get(pe_fut_atm_ltp)
     if ce_fut_atm_ltp is None or pe_fut_atm_ltp is None:
-        return {}, None, [], None, future_price, None, None, spot_price
+        return {}, None, [], None, future_price, None, None, spot_price, future_atm_strike
 
 
     Skew = pe_fut_atm_ltp - ce_fut_atm_ltp if ce_fut_atm_ltp and pe_fut_atm_ltp else None
@@ -580,7 +580,7 @@ def get_current_iron_condor():
     # future_price = spot_price+(ce_atm_ltp['ltp']-pe_atm_ltp['ltp']) if ce_atm_ltp and pe_atm_ltp else None
     # Skew = pe_atm_ltp['ltp'] - ce_atm_ltp['ltp'] if ce_atm_ltp and pe_atm_ltp else None
 
-    return result, net_delta, options_data,strangle_credit, future_price, Skew,delta,spot_price
+    return result, net_delta, options_data, strangle_credit, future_price, Skew, delta, spot_price, future_atm_strike
 
 
 def on_connect(ws, response):

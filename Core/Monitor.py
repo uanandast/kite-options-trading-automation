@@ -63,6 +63,12 @@ INDEX_STRIKE_STEP = {
     "SENSEX": 100,
 }
 
+INDEX_FREEZE_QTY = {
+    "NIFTY": 1755,
+    "BANKNIFTY": 900,
+    "SENSEX": 1000,
+}
+
 def get_margin():
     margin = kite.margins('equity').get('available')['collateral'] + kite.margins('equity').get('available')['opening_balance']  
 
@@ -276,7 +282,77 @@ def _compute_target_strike(current_strike, opt_type, shift_steps, strike_step):
     raise ValueError(f"Unsupported option type for shift: {opt_type}")
 
 
-def exit_position(pos, side=None, quantity=None):
+def _get_selected_index_key():
+    try:
+        from Core.Delta_IV import get_selected_index
+        return str(get_selected_index() or "").strip().lower()
+    except Exception:
+        return ""
+
+
+def _infer_index_from_symbol(symbol):
+    symbol_norm = str(symbol or "").upper()
+    if "BANKNIFTY" in symbol_norm:
+        return "BANKNIFTY"
+    if "SENSEX" in symbol_norm:
+        return "SENSEX"
+    if "NIFTY" in symbol_norm:
+        return "NIFTY"
+    return ""
+
+
+def _resolve_index_key(position=None, symbol=None):
+    selected = _get_selected_index_key()
+    if selected.upper() in INDEX_FREEZE_QTY:
+        return selected.upper()
+
+    candidate = symbol or (position or {}).get("tradingsymbol")
+    inferred = _infer_index_from_symbol(candidate)
+    if inferred in INDEX_FREEZE_QTY:
+        return inferred
+
+    return "NIFTY"
+
+
+def _get_freeze_qty(position=None, symbol=None):
+    index_key = _resolve_index_key(position=position, symbol=symbol)
+    return INDEX_FREEZE_QTY.get(index_key, INDEX_FREEZE_QTY["NIFTY"])
+
+
+def _place_market_exit(order_template, quantity, *, fast=False):
+    freeze_limit = int(order_template.get("freeze_limit") or _get_freeze_qty(symbol=order_template.get("tradingsymbol")))
+    order_ids = []
+    chunks = []
+
+    for i in range(0, quantity, freeze_limit):
+        chunks.append(min(freeze_limit, quantity - i))
+
+    def _place_chunk(chunk_qty):
+        return kite.place_order(
+            exchange=order_template["exchange"],
+            tradingsymbol=order_template["tradingsymbol"],
+            transaction_type=order_template["transaction_type"],
+            quantity=chunk_qty,
+            order_type="MARKET",
+            product=order_template["product"],
+            variety="regular",
+            market_protection=-1
+        )
+
+    if fast and len(chunks) > 1:
+        max_workers = min(3, len(chunks))
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = [executor.submit(_place_chunk, qty) for qty in chunks]
+            for future in as_completed(futures):
+                order_ids.append(future.result())
+    else:
+        for qty in chunks:
+            order_ids.append(_place_chunk(qty))
+
+    return order_ids
+
+
+def exit_position(pos, side=None, quantity=None, fast=False):
     try:
         total_qty = abs(int(pos.get("quantity", 0)))
         if total_qty <= 0:
@@ -296,30 +372,31 @@ def exit_position(pos, side=None, quantity=None):
                 print(f"❌ Exit quantity {requested_qty} exceeds open {total_qty} for {pos.get('tradingsymbol')}")
                 return []
 
-        freeze_limit = 1755
-
         # Side is derived from current position direction to avoid accidental reversal.
         side = "BUY" if int(pos.get("quantity", 0)) < 0 else "SELL"
-        order_ids = []
+        freeze_limit = _get_freeze_qty(position=pos)
+        if fast and requested_qty > freeze_limit:
+            print(f"⚡ Fast exit for {pos['tradingsymbol']} with {side}, Qty={requested_qty}")
+        else:
+            print(f"🔁 Exiting {pos['tradingsymbol']} with {side}, Qty={requested_qty}")
 
-        for i in range(0, requested_qty, freeze_limit):
-            chunk_qty = min(freeze_limit, requested_qty - i)
-
-            print(f"🔁 Exiting {pos['tradingsymbol']} with {side}, Qty={chunk_qty}")
-            start_ts = time.time()
-            order_id = kite.place_order(
-                exchange=pos["exchange"],
-                tradingsymbol=pos["tradingsymbol"],
-                transaction_type=side,
-                quantity=chunk_qty,
-                order_type="MARKET",
-                product=pos["product"],
-                variety="regular",
-                market_protection=-1
-            )
-            elapsed = time.time() - start_ts
-            print(f"✅ Exit order placed: {order_id} ({elapsed:.2f}s)")
-            order_ids.append(order_id)
+        start_ts = time.time()
+        order_ids = _place_market_exit(
+            {
+                "exchange": pos["exchange"],
+                "tradingsymbol": pos["tradingsymbol"],
+                "transaction_type": side,
+                "product": pos["product"],
+                "freeze_limit": freeze_limit,
+            },
+            requested_qty,
+            fast=fast,
+        )
+        elapsed = time.time() - start_ts
+        if fast:
+            print(f"✅ Fast exit order(s) placed for {pos['tradingsymbol']} ({elapsed:.2f}s)")
+        else:
+            print(f"✅ Exit order placed for {pos['tradingsymbol']} ({elapsed:.2f}s)")
         return order_ids
     except Exception as e:
         print(f"❌ Error while exiting hedge {pos['tradingsymbol']}: {e}")
@@ -327,7 +404,7 @@ def exit_position(pos, side=None, quantity=None):
 
 
 def _place_market_entry(order_template, quantity):
-    freeze_limit = 1755
+    freeze_limit = int(order_template.get("freeze_limit") or _get_freeze_qty(symbol=order_template.get("tradingsymbol")))
     order_ids = []
     for i in range(0, quantity, freeze_limit):
         chunk_qty = min(freeze_limit, quantity - i)
@@ -495,7 +572,7 @@ def shift_selected_legs(selected_legs, shift_steps):
 
             is_short = pos_qty < 0
 
-            exit_order_ids = exit_position(pos, quantity=abs(pos_qty))
+            exit_order_ids = exit_position(pos, quantity=abs(pos_qty), fast=True)
             if not exit_order_ids:
                 raise RuntimeError("Square off failed")
             squared_off, remaining_qty = _wait_for_position_reduction(
@@ -599,7 +676,7 @@ def exit_selected_legs(selected_legs):
 
         try:
             position_qty = abs(int(pos.get("quantity", 0)))
-            order_ids = exit_position(pos, quantity=position_qty)
+            order_ids = exit_position(pos, quantity=position_qty, fast=True)
             results.append({
                 "status": "success",
                 "tradingsymbol": pos.get("tradingsymbol"),
@@ -670,7 +747,7 @@ def place_stoploss_order(position, *, ltp=None, sl_trigger_price=None, fast=Fals
 
     total_qty = abs(position["quantity"])
 
-    freeze_limit = 1755
+    freeze_limit = _get_freeze_qty(position=position)
 
     try:
         order_ids = []
@@ -867,7 +944,7 @@ def Exiting_position(positions):
             max_workers = min(4, len(short_legs))
             print(f"⚡ Exiting short legs first: {len(short_legs)} legs (workers={max_workers})")
             with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                futures = [executor.submit(exit_position, pos, "BUY") for pos in short_legs]
+                futures = [executor.submit(exit_position, pos, "BUY", None, True) for pos in short_legs]
                 for future in as_completed(futures):
                     if future.result():
                         succeeded += 1
@@ -878,7 +955,7 @@ def Exiting_position(positions):
             max_workers = min(4, len(long_legs))
             print(f"⚡ Exiting long legs next: {len(long_legs)} legs (workers={max_workers})")
             with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                futures = [executor.submit(exit_position, pos, "SELL") for pos in long_legs]
+                futures = [executor.submit(exit_position, pos, "SELL", None, True) for pos in long_legs]
                 for future in as_completed(futures):
                     if future.result():
                         succeeded += 1
@@ -938,7 +1015,7 @@ def Exiting_closing_account(positions):
             max_workers = min(4, len(short_legs))
             print(f"⚡ Exiting short legs first: {len(short_legs)} legs (workers={max_workers})")
             with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                futures = [executor.submit(exit_position, pos, "BUY") for pos in short_legs]
+                futures = [executor.submit(exit_position, pos, "BUY", None, True) for pos in short_legs]
                 for future in as_completed(futures):
                     future.result()
 
@@ -946,7 +1023,7 @@ def Exiting_closing_account(positions):
             max_workers = min(4, len(long_legs))
             print(f"⚡ Exiting long legs next: {len(long_legs)} legs (workers={max_workers})")
             with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                futures = [executor.submit(exit_position, pos, "SELL") for pos in long_legs]
+                futures = [executor.submit(exit_position, pos, "SELL", None, True) for pos in long_legs]
                 for future in as_completed(futures):
                     future.result()
         # placed_sl_orders.clear()
