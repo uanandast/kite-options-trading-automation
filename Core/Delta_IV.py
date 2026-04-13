@@ -7,6 +7,11 @@ import configparser
 import time
 import datetime as dt
 from pathlib import Path
+from Core.shared_resources import (
+    clear_option_instrument_cache,
+    get_option_instrument_cache,
+    set_option_instrument_cache,
+)
 
 
 # === Your credentials ===
@@ -57,6 +62,40 @@ instrument_lookup_by_exchange = {}
 subscribed_tokens = []
 
 stradle_price =0
+
+
+def _normalize_option_instrument(meta):
+    row = dict(meta or {})
+    if "instrument_type" not in row and "type" in row:
+        row["instrument_type"] = row.get("type")
+    if "type" not in row and "instrument_type" in row:
+        row["type"] = row.get("instrument_type")
+
+    if not row.get("name"):
+        symbol = str(row.get("tradingsymbol", "")).upper()
+        if "BANKNIFTY" in symbol:
+            row["name"] = "BANKNIFTY"
+        elif "SENSEX" in symbol:
+            row["name"] = "SENSEX"
+        elif "NIFTY" in symbol:
+            row["name"] = "NIFTY"
+        else:
+            row["name"] = ""
+    return row
+
+
+def _publish_option_instrument_cache():
+    # Republish the entire cache snapshot after each reconfiguration.
+    clear_option_instrument_cache()
+    by_exchange = {}
+    for meta in option_meta_by_symbol.values():
+        normalized = _normalize_option_instrument(meta)
+        exchange = str(normalized.get("exchange", "")).strip().upper()
+        if not exchange:
+            continue
+        by_exchange.setdefault(exchange, []).append(normalized)
+    for exchange, instruments in by_exchange.items():
+        set_option_instrument_cache(exchange, instruments)
 
 
 def _configure_index_data(index_key):
@@ -112,6 +151,7 @@ def _configure_index_data(index_key):
     strike_step = cfg["strike_step"]
     live_data = {}
     instrument_lookup_by_exchange = {}
+    _publish_option_instrument_cache()
 
 
 def _build_exchange_option_lookup(exchange):
@@ -192,6 +232,18 @@ def get_selected_index():
 
 def get_available_indices():
     return list(INDEX_CONFIG.keys())
+
+def get_cached_option_instruments(exchange=None):
+    """
+    Compatibility helper backed by shared global cache.
+    """
+    cached = get_option_instrument_cache(exchange=exchange)
+    if isinstance(cached, dict):
+        merged = []
+        for rows in cached.values():
+            merged.extend(rows)
+        return merged
+    return cached
 
 
 def get_previous_day_close():

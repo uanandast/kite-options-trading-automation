@@ -23,7 +23,12 @@ from google.genai import Client
 from google.genai.types import FunctionDeclaration, Tool, GenerateContentConfig
 
 # === Threading lock for monitor_spreads ===
-from Core.shared_resources import monitor_lock, set_processing_state, get_processing_state
+from Core.shared_resources import (
+    monitor_lock,
+    set_processing_state,
+    get_processing_state,
+    get_option_instrument_cache,
+)
 
 
 try:
@@ -55,7 +60,6 @@ is_exiting = False
 
 # Track SL order IDs and matched hedge legs
 placed_sl_orders = {}
-_instrument_cache = {}
 
 INDEX_STRIKE_STEP = {
     "BANKNIFTY": 100,
@@ -208,13 +212,9 @@ def cancel_all_sl_orders(fast=False):
 
 
 def _load_instruments(exchange):
-    now = time.time()
-    cached = _instrument_cache.get(exchange)
-    if cached and (now - cached["ts"] < 120):
-        return cached["data"]
-    data = kite.instruments(exchange)
-    _instrument_cache[exchange] = {"ts": now, "data": data}
-    return data
+    exchange_norm = str(exchange or "").strip().upper()
+    data = get_option_instrument_cache(exchange=exchange_norm)
+    return data if isinstance(data, list) else []
 
 
 def _position_index_key(position):
@@ -283,11 +283,8 @@ def _compute_target_strike(current_strike, opt_type, shift_steps, strike_step):
 
 
 def _get_selected_index_key():
-    try:
-        from Core.Delta_IV import get_selected_index
-        return str(get_selected_index() or "").strip().lower()
-    except Exception:
-        return ""
+    # Keep shift-leg path decoupled from Delta_IV imports.
+    return ""
 
 
 def _infer_index_from_symbol(symbol):
@@ -506,23 +503,52 @@ def shift_selected_legs(selected_legs, shift_steps):
     results = []
 
     def _shift_single_leg(leg):
+        leg_start = time.perf_counter()
+        timings = {}
+
+        def _mark(step_name, start_ts):
+            timings[step_name] = time.perf_counter() - start_ts
+
+        def _timing_summary():
+            ordered_keys = [
+                "load_instruments",
+                "resolve_current_instrument",
+                "build_same_family",
+                "compute_target_strike",
+                "lookup_target_instrument",
+                "find_next_strike",
+                "exit_position",
+                "square_off_confirm",
+                "take_new_position",
+                "total",
+            ]
+            return ", ".join(
+                f"{key}={timings[key]:.2f}s"
+                for key in ordered_keys
+                if key in timings
+            )
+
         symbol = str(leg.get("tradingsymbol", "")).strip()
         exchange = str(leg.get("exchange", "")).strip().upper()
         if not symbol:
+            timings["total"] = time.perf_counter() - leg_start
             return {
                 "status": "failed",
                 "old_symbol": "",
                 "new_symbol": None,
                 "error": "Missing tradingsymbol",
+                "timings": timings,
             }
 
         pos = _resolve_open_position(open_positions, symbol, exchange=exchange)
         if pos is None:
+            timings["total"] = time.perf_counter() - leg_start
             return {
                 "status": "failed",
                 "old_symbol": symbol,
                 "new_symbol": None,
                 "error": "Position not found or already closed",
+                "timings": timings,
             }
 
         pos_exchange = pos.get("exchange")
@@ -530,19 +556,33 @@ def shift_selected_legs(selected_legs, shift_steps):
         pos_qty = int(pos.get("quantity", 0))
         opt_type = _extract_opt_type(pos)
         if opt_type is None:
+            timings["total"] = time.perf_counter() - leg_start
             return {
                 "status": "failed",
                 "old_symbol": pos_symbol,
                 "new_symbol": None,
                 "error": "Not an option leg",
+                "timings": timings,
             }
 
         try:
+            strike_start = time.perf_counter()
+            load_start = time.perf_counter()
             instruments = _load_instruments(pos_exchange)
+            _mark("load_instruments", load_start)
+            if not instruments:
+                raise RuntimeError(
+                    f"Instrument cache unavailable for {pos_exchange}. "
+                    "Delta_IV cache is empty; no API fallback configured."
+                )
+
+            resolve_start = time.perf_counter()
             current_inst = _extract_instrument_details(pos, instruments)
             if not current_inst:
                 raise RuntimeError("Unable to resolve instrument metadata")
+            _mark("resolve_current_instrument", resolve_start)
 
+            family_start = time.perf_counter()
             current_strike = float(current_inst.get("strike", 0) or 0)
             if current_strike <= 0:
                 parsed = _parse_strike_from_symbol(pos_symbol)
@@ -557,9 +597,14 @@ def shift_selected_legs(selected_legs, shift_steps):
                 and inst.get("name") == current_inst.get("name")
                 and inst.get("instrument_type") == current_inst.get("instrument_type")
             ]
+            _mark("build_same_family", family_start)
+
+            strike_calc_start = time.perf_counter()
             strike_step = _determine_strike_step(current_inst.get("name"), same_family)
             target_strike = _compute_target_strike(current_strike, opt_type, shift_steps, strike_step)
+            _mark("compute_target_strike", strike_calc_start)
 
+            target_lookup_start = time.perf_counter()
             target_inst = next(
                 (
                     inst for inst in same_family
@@ -569,12 +614,18 @@ def shift_selected_legs(selected_legs, shift_steps):
             )
             if not target_inst:
                 raise RuntimeError(f"No target symbol for strike {int(target_strike)} {opt_type} same expiry")
+            _mark("lookup_target_instrument", target_lookup_start)
+            _mark("find_next_strike", strike_start)
 
             is_short = pos_qty < 0
 
+            exit_start = time.perf_counter()
             exit_order_ids = exit_position(pos, quantity=abs(pos_qty), fast=True)
             if not exit_order_ids:
                 raise RuntimeError("Square off failed")
+            _mark("exit_position", exit_start)
+
+            confirm_start = time.perf_counter()
             squared_off, remaining_qty = _wait_for_position_reduction(
                 pos_symbol,
                 pos_exchange,
@@ -584,6 +635,7 @@ def shift_selected_legs(selected_legs, shift_steps):
                 raise RuntimeError(
                     f"Square off not confirmed before re-entry (remaining qty: {remaining_qty})"
                 )
+            _mark("square_off_confirm", confirm_start)
 
             entry_qty = abs(pos_qty)
             requested_new_qty = leg.get("new_qty")
@@ -597,14 +649,18 @@ def shift_selected_legs(selected_legs, shift_steps):
                 entry_qty = parsed_new_qty
 
             entry_side = "SELL" if is_short else "BUY"
+            entry_start = time.perf_counter()
             entry_order_ids = _place_market_entry({
                 "exchange": pos_exchange,
                 "tradingsymbol": target_inst["tradingsymbol"],
                 "transaction_type": entry_side,
                 "product": pos.get("product"),
             }, entry_qty)
+            _mark("take_new_position", entry_start)
 
             sl_place_result = {"placed": 0, "error": None}
+            timings["total"] = time.perf_counter() - leg_start
+            print(f"⏱️ Shift timings for {pos_symbol} -> {_timing_summary()}")
 
             return {
                 "status": "success",
@@ -618,14 +674,18 @@ def shift_selected_legs(selected_legs, shift_steps):
                 "sl_placed": sl_place_result["placed"],
                 "sl_error": sl_place_result["error"],
                 "entry_order_ids": entry_order_ids,
+                "timings": timings,
             }
         except Exception as e:
+            timings["total"] = time.perf_counter() - leg_start
+            print(f"⏱️ Shift timings for {pos_symbol} -> {_timing_summary()}")
             return {
                 "status": "failed",
                 "old_symbol": pos_symbol,
                 "new_symbol": None,
                 "exchange": pos_exchange,
                 "error": str(e),
+                "timings": timings,
             }
 
     if len(selected_legs) > 1:
