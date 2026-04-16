@@ -2,7 +2,7 @@ import numpy as np
 from kiteconnect import KiteConnect, KiteTicker
 from datetime import datetime
 from scipy.stats import norm
-from scipy.optimize import minimize_scalar
+from scipy.optimize import minimize_scalar, brentq
 import configparser
 import time
 import datetime as dt
@@ -269,20 +269,32 @@ def BS_PUT(S, K, T, r, sigma):
 
 def implied_vol(opt_value, S, K, T, r, type_='call'):
     try:
-        def call_obj(sigma):
-            return abs(BS_CALL(S, K, T, r, sigma) - opt_value)
-        def put_obj(sigma):
-            return abs(BS_PUT(S, K, T, r, sigma) - opt_value)
-
         if type_ == 'call':
-            res = minimize_scalar(call_obj, bounds=(0.01, 3), method='bounded')
-            return res.x
+            def call_root(sigma):
+                return BS_CALL(S, K, T, r, sigma) - opt_value
+            return brentq(call_root, 0.001, 3.0)
         elif type_ == 'put':
-            res = minimize_scalar(put_obj, bounds=(0.01, 3), method='bounded')
-            return res.x
+            def put_root(sigma):
+                return BS_PUT(S, K, T, r, sigma) - opt_value
+            return brentq(put_root, 0.001, 3.0)
         else:
             raise ValueError("type_ must be 'put' or 'call'")
-    except:
+    except Exception:
+        # Fallback to minimize_scalar if brentq fails (e.g., if IV is exactly near 0.001 or 3.0 where no root brackets exist)
+        try:
+            def call_obj(sigma):
+                return abs(BS_CALL(S, K, T, r, sigma) - opt_value)
+            def put_obj(sigma):
+                return abs(BS_PUT(S, K, T, r, sigma) - opt_value)
+
+            if type_ == 'call':
+                res = minimize_scalar(call_obj, bounds=(0.01, 3), method='bounded')
+                return res.x
+            elif type_ == 'put':
+                res = minimize_scalar(put_obj, bounds=(0.01, 3), method='bounded')
+                return res.x
+        except:
+            pass
         return np.nan
 
 def bs_delta(S, K, T, r, sigma, option_type='call'):
@@ -298,6 +310,36 @@ def bs_delta(S, K, T, r, sigma, option_type='call'):
 kws = KiteTicker(api_key, access_token)
 live_data = {}
 
+_positions_cache = None
+_positions_cache_time = 0
+
+def get_positions_cached():
+    global _positions_cache, _positions_cache_time
+    if _positions_cache is None or time.time() - _positions_cache_time > 2.0:
+        try:
+            _positions_cache = kite.positions()['net']
+            _positions_cache_time = time.time()
+        except:
+            if _positions_cache is None:
+                return []
+    return _positions_cache
+
+_ltp_fallback_cache = {}
+_ltp_fallback_time = {}
+
+def get_ltp_cached(ltp_key):
+    global _ltp_fallback_cache, _ltp_fallback_time
+    now_t = time.time()
+    if ltp_key not in _ltp_fallback_cache or (now_t - _ltp_fallback_time.get(ltp_key, 0) > 2.0):
+        try:
+            ltp_payload = kite.ltp(ltp_key)
+            _ltp_fallback_cache[ltp_key] = ltp_payload.get(ltp_key, {}).get("last_price")
+            _ltp_fallback_time[ltp_key] = now_t
+        except Exception:
+            _ltp_fallback_cache[ltp_key] = None
+            _ltp_fallback_time[ltp_key] = now_t
+    return _ltp_fallback_cache.get(ltp_key)
+
 def get_delta_from_position(options_data, future_price):
     """
     Calculate the total delta of all option positions.
@@ -311,8 +353,7 @@ def get_delta_from_position(options_data, future_price):
     """
     total_delta = 0.0
     try:
-        positions = kite.positions()['net']
-        ltp_fallback_cache = {}
+        positions = get_positions_cached()
         for pos in positions:
             # Skip if not an option position or zero quantity
             if not pos['tradingsymbol'].endswith(('CE', 'PE')) or pos['quantity'] == 0 or pos['exchange'] not in ('BFO','NFO'):
@@ -347,16 +388,10 @@ def get_delta_from_position(options_data, future_price):
                 ltp = live_data[token_from_meta]
             else:
                 ltp_key = f"{pos.get('exchange')}:{symbol}"
-                if ltp_key not in ltp_fallback_cache:
-                    try:
-                        ltp_payload = kite.ltp(ltp_key)
-                        ltp_fallback_cache[ltp_key] = ltp_payload.get(ltp_key, {}).get("last_price")
-                    except Exception:
-                        ltp_fallback_cache[ltp_key] = None
-                ltp = ltp_fallback_cache.get(ltp_key)
+                ltp = get_ltp_cached(ltp_key)
 
             if ltp is None or ltp <= 0:
-                print(f"⚠️ Can't compute delta for {symbol}, LTP unavailable.")
+                # Silently skip logging to avoid console spam in rapid loops
                 continue
 
             strike = opt_details['strike']

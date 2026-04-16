@@ -27,7 +27,6 @@ from Core.shared_resources import (
     monitor_lock,
     set_processing_state,
     get_processing_state,
-    get_option_instrument_cache,
 )
 
 
@@ -211,11 +210,6 @@ def cancel_all_sl_orders(fast=False):
 
 
 
-def _load_instruments(exchange):
-    exchange_norm = str(exchange or "").strip().upper()
-    data = get_option_instrument_cache(exchange=exchange_norm)
-    return data if isinstance(data, list) else []
-
 
 def _position_index_key(position):
     return f"{position.get('exchange')}::{position.get('tradingsymbol')}"
@@ -240,38 +234,6 @@ def _parse_strike_from_symbol(symbol):
         return None
 
 
-def _extract_instrument_details(position, instruments):
-    token = position.get("instrument_token")
-    if token is not None:
-        try:
-            token_int = int(token)
-            by_token = next((inst for inst in instruments if int(inst.get("instrument_token", -1)) == token_int), None)
-            if by_token:
-                return by_token
-        except Exception:
-            pass
-    symbol = position.get("tradingsymbol")
-    return next((inst for inst in instruments if inst.get("tradingsymbol") == symbol), None)
-
-
-def _determine_strike_step(name, same_family):
-    normalized = str(name or "").upper()
-    if "BANKNIFTY" in normalized:
-        return INDEX_STRIKE_STEP["BANKNIFTY"]
-    if "SENSEX" in normalized:
-        return INDEX_STRIKE_STEP["SENSEX"]
-    if "NIFTY" in normalized:
-        return INDEX_STRIKE_STEP["NIFTY"]
-
-    unique_strikes = sorted({float(inst.get("strike", 0)) for inst in same_family if float(inst.get("strike", 0)) > 0})
-    diffs = []
-    for i in range(1, len(unique_strikes)):
-        diff = unique_strikes[i] - unique_strikes[i - 1]
-        if diff > 0:
-            diffs.append(diff)
-    if diffs:
-        return int(round(min(diffs)))
-    return 50
 
 
 def _compute_target_strike(current_strike, opt_type, shift_steps, strike_step):
@@ -567,53 +529,38 @@ def shift_selected_legs(selected_legs, shift_steps):
 
         try:
             strike_start = time.perf_counter()
-            load_start = time.perf_counter()
-            instruments = _load_instruments(pos_exchange)
-            _mark("load_instruments", load_start)
-            if not instruments:
-                raise RuntimeError(
-                    f"Instrument cache unavailable for {pos_exchange}. "
-                    "Delta_IV cache is empty; no API fallback configured."
-                )
 
-            resolve_start = time.perf_counter()
-            current_inst = _extract_instrument_details(pos, instruments)
-            if not current_inst:
-                raise RuntimeError("Unable to resolve instrument metadata")
-            _mark("resolve_current_instrument", resolve_start)
+            # --- OPTIMIZED SHIFT LOGIC (NO CACHE/API LOOKUP) ---
+            parsed_strike = _parse_strike_from_symbol(pos_symbol)
+            if parsed_strike is None:
+                raise RuntimeError(f"Unable to resolve current strike from {pos_symbol}")
+            current_strike = parsed_strike
 
-            family_start = time.perf_counter()
-            current_strike = float(current_inst.get("strike", 0) or 0)
-            if current_strike <= 0:
-                parsed = _parse_strike_from_symbol(pos_symbol)
-                if parsed is None:
-                    raise RuntimeError("Unable to resolve current strike")
-                current_strike = parsed
-
-            same_family = [
-                inst for inst in instruments
-                if inst.get("exchange") == current_inst.get("exchange")
-                and inst.get("expiry") == current_inst.get("expiry")
-                and inst.get("name") == current_inst.get("name")
-                and inst.get("instrument_type") == current_inst.get("instrument_type")
-            ]
-            _mark("build_same_family", family_start)
+            index_name = _infer_index_from_symbol(pos_symbol)
+            if not index_name:
+                raise RuntimeError(f"Could not infer index from symbol {pos_symbol}")
+            
+            strike_step = INDEX_STRIKE_STEP.get(index_name)
+            if not strike_step:
+                raise RuntimeError(f"Could not determine strike step for index {index_name}")
 
             strike_calc_start = time.perf_counter()
-            strike_step = _determine_strike_step(current_inst.get("name"), same_family)
             target_strike = _compute_target_strike(current_strike, opt_type, shift_steps, strike_step)
             _mark("compute_target_strike", strike_calc_start)
 
             target_lookup_start = time.perf_counter()
-            target_inst = next(
-                (
-                    inst for inst in same_family
-                    if float(inst.get("strike", -1)) == float(target_strike)
-                ),
-                None
+            
+            # Reconstruct the new trading symbol via string substitution
+            # example: NIFTY24APR22500CE -> NIFTY24APR22550CE
+            new_target_symbol = re.sub(
+                rf"{int(current_strike)}{opt_type}$", 
+                f"{int(target_strike)}{opt_type}", 
+                pos_symbol, 
+                flags=re.IGNORECASE
             )
-            if not target_inst:
-                raise RuntimeError(f"No target symbol for strike {int(target_strike)} {opt_type} same expiry")
+            if new_target_symbol == pos_symbol:
+                raise RuntimeError(f"Failed to cleanly generate target symbol from {pos_symbol}")
+
             _mark("lookup_target_instrument", target_lookup_start)
             _mark("find_next_strike", strike_start)
 
@@ -652,7 +599,7 @@ def shift_selected_legs(selected_legs, shift_steps):
             entry_start = time.perf_counter()
             entry_order_ids = _place_market_entry({
                 "exchange": pos_exchange,
-                "tradingsymbol": target_inst["tradingsymbol"],
+                "tradingsymbol": new_target_symbol,
                 "transaction_type": entry_side,
                 "product": pos.get("product"),
             }, entry_qty)
@@ -665,7 +612,7 @@ def shift_selected_legs(selected_legs, shift_steps):
             return {
                 "status": "success",
                 "old_symbol": pos_symbol,
-                "new_symbol": target_inst["tradingsymbol"],
+                "new_symbol": new_target_symbol,
                 "exchange": pos_exchange,
                 "quantity": abs(pos_qty),
                 "entry_quantity": entry_qty,
