@@ -295,9 +295,14 @@ def _format_stoploss_message(result):
 
 
 def _format_exit_message(result):
+    if result.get("in_progress"):
+        return result.get("error") or "Exit all is already in progress"
     if result.get("attempted", 0) == 0:
         return "No open positions to exit"
-    msg = f"Exited {result.get('succeeded', 0)} legs"
+    msg = (
+        f"Exited {result.get('short_succeeded', 0)} short legs, "
+        f"then {result.get('long_succeeded', 0)} long legs"
+    )
     if result.get("failed", 0) > 0:
         msg += f" ({result.get('failed', 0)} failed)"
     return msg

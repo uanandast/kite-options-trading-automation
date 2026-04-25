@@ -10,6 +10,7 @@ import os
 import re
 from urllib import response
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from threading import Lock
 from kiteconnect import KiteConnect
 import configparser
 from collections import defaultdict
@@ -55,6 +56,7 @@ Current_pos_credit = 0
 
 # Track exiting state
 is_exiting = False
+exit_all_lock = Lock()
 
 
 # Track SL order IDs and matched hedge legs
@@ -929,62 +931,101 @@ def calculate_pnl(positions):
         return 0, 0
 
 
-def Exiting_position(positions):
-    # This Function is called when Button is pressed to exit all positions at once, it will first exit all short legs and then long legs with concurrency to speed up the process.
-    # global is_exiting
-    # is_exiting = True
-    try:
-        print("Exiting all Postions...")
+def _empty_exit_all_result(reason=None):
+    return {
+        "reason": reason,
+        "short_legs": 0,
+        "long_legs": 0,
+        "attempted": 0,
+        "succeeded": 0,
+        "failed": 0,
+        "short_succeeded": 0,
+        "short_failed": 0,
+        "long_succeeded": 0,
+        "long_failed": 0,
+        "in_progress": False,
+    }
 
-        short_legs = [p for p in positions if p['quantity'] < 0 and p['tradingsymbol'].endswith(("CE", "PE")) and p['exchange'] in ('BFO','NFO','MCX')]
-        long_legs = [p for p in positions if p['quantity'] > 0 and p['tradingsymbol'].endswith(("CE", "PE")) and p['exchange'] in ('BFO','NFO','MCX')]
+
+def _exit_leg_group(legs, label):
+    succeeded = 0
+    failed = 0
+
+    if not legs:
+        return succeeded, failed
+
+    max_workers = min(4, len(legs))
+    print(f"⚡ Exiting {label} legs: {len(legs)} legs (workers={max_workers})")
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = [executor.submit(exit_position, pos, None, None, True) for pos in legs]
+        for future in as_completed(futures):
+            if future.result():
+                succeeded += 1
+            else:
+                failed += 1
+
+    return succeeded, failed
+
+
+def exit_all_positions_short_then_long(positions, allowed_exchanges=('BFO', 'NFO', 'MCX'), reason=None):
+    result = _empty_exit_all_result(reason=reason)
+    if not exit_all_lock.acquire(blocking=False):
+        result["in_progress"] = True
+        result["error"] = "Exit all is already in progress"
+        print("⚠️ Exit all is already in progress; ignoring duplicate request.")
+        return result
+
+    try:
+        print(f"Exiting all positions ({reason or 'unspecified'})...")
+        allowed_exchanges = set(allowed_exchanges)
+
+        short_legs = [
+            p for p in positions
+            if p['quantity'] < 0
+            and p['tradingsymbol'].endswith(("CE", "PE"))
+            and p['exchange'] in allowed_exchanges
+        ]
+        long_legs = [
+            p for p in positions
+            if p['quantity'] > 0
+            and p['tradingsymbol'].endswith(("CE", "PE"))
+            and p['exchange'] in allowed_exchanges
+        ]
 
         short_legs = [p for p in short_legs if p['quantity'] != 0]
         long_legs = [p for p in long_legs if p['quantity'] != 0]
 
-        total_short = len(short_legs)
-        total_long = len(long_legs)
-        succeeded = 0
-        failed = 0
+        result["short_legs"] = len(short_legs)
+        result["long_legs"] = len(long_legs)
+        result["attempted"] = result["short_legs"] + result["long_legs"]
 
         if short_legs:
-            max_workers = min(4, len(short_legs))
-            print(f"⚡ Exiting short legs first: {len(short_legs)} legs (workers={max_workers})")
-            with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                futures = [executor.submit(exit_position, pos, "BUY", None, True) for pos in short_legs]
-                for future in as_completed(futures):
-                    if future.result():
-                        succeeded += 1
-                    else:
-                        failed += 1
+            print("📉 Phase 1: exiting short legs first")
+            result["short_succeeded"], result["short_failed"] = _exit_leg_group(short_legs, "short")
 
         if long_legs:
-            max_workers = min(4, len(long_legs))
-            print(f"⚡ Exiting long legs next: {len(long_legs)} legs (workers={max_workers})")
-            with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                futures = [executor.submit(exit_position, pos, "SELL", None, True) for pos in long_legs]
-                for future in as_completed(futures):
-                    if future.result():
-                        succeeded += 1
-                    else:
-                        failed += 1
-        return {
-            "short_legs": total_short,
-            "long_legs": total_long,
-            "attempted": total_short + total_long,
-            "succeeded": succeeded,
-            "failed": failed,
-        }
+            print("📈 Phase 2: exiting long legs after short phase completed")
+            result["long_succeeded"], result["long_failed"] = _exit_leg_group(long_legs, "long")
+
+        result["succeeded"] = result["short_succeeded"] + result["long_succeeded"]
+        result["failed"] = result["short_failed"] + result["long_failed"]
+        return result
     except Exception as e:
         print(f"❌ Error in P&L monitoring: {e}")
-        return {
-            "short_legs": 0,
-            "long_legs": 0,
-            "attempted": 0,
-            "succeeded": 0,
-            "failed": 1,
-            "error": str(e),
-        }
+        result["failed"] += 1
+        result["error"] = str(e)
+        return result
+    finally:
+        exit_all_lock.release()
+
+
+def Exiting_position(positions):
+    # Button path: exit all option positions, shorts first and longs second.
+    return exit_all_positions_short_then_long(
+        positions,
+        allowed_exchanges=('BFO', 'NFO', 'MCX'),
+        reason="manual",
+    )
 
 def routine_close(positions):
     #exit the program after 10 PM
@@ -993,7 +1034,11 @@ def routine_close(positions):
         print("Routine close: It's after 10 PM. Exiting all positions and shutting down.")
         send_telegram("Routine close: It's after 10 PM. Exiting all positions and shutting down.")
         try:
-            Exiting_position(positions)
+            exit_all_positions_short_then_long(
+                positions,
+                allowed_exchanges=('BFO', 'NFO', 'MCX'),
+                reason="routine",
+            )
         except Exception as e:
             print(f"❌ Error during routine close exiting positions: {e}")
         os._exit(0)
@@ -1016,27 +1061,11 @@ def Exiting_closing_account(positions):
         #             beep()
         #         except Exception as e:
         #             print(f"⚠️ Error cancelling SL order {o['order_id']} for {o['tradingsymbol']}: {e}")
-        short_legs = [p for p in positions if p['quantity'] < 0 and p['tradingsymbol'].endswith(("CE", "PE")) and p['exchange'] in ('BFO','NFO')]
-        long_legs = [p for p in positions if p['quantity'] > 0 and p['tradingsymbol'].endswith(("CE", "PE")) and p['exchange'] in ('BFO','NFO')]
-
-        short_legs = [p for p in short_legs if p['quantity'] != 0]
-        long_legs = [p for p in long_legs if p['quantity'] != 0]
-
-        if short_legs:
-            max_workers = min(4, len(short_legs))
-            print(f"⚡ Exiting short legs first: {len(short_legs)} legs (workers={max_workers})")
-            with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                futures = [executor.submit(exit_position, pos, "BUY", None, True) for pos in short_legs]
-                for future in as_completed(futures):
-                    future.result()
-
-        if long_legs:
-            max_workers = min(4, len(long_legs))
-            print(f"⚡ Exiting long legs next: {len(long_legs)} legs (workers={max_workers})")
-            with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                futures = [executor.submit(exit_position, pos, "SELL", None, True) for pos in long_legs]
-                for future in as_completed(futures):
-                    future.result()
+        exit_all_positions_short_then_long(
+            positions,
+            allowed_exchanges=('BFO', 'NFO'),
+            reason="threshold",
+        )
         # placed_sl_orders.clear()
         ask_and_sleep_mac()
 
