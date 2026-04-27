@@ -299,12 +299,16 @@ def _format_exit_message(result):
         return result.get("error") or "Exit all is already in progress"
     if result.get("attempted", 0) == 0:
         return "No open positions to exit"
+    short_done = result.get("short_confirmed", result.get("short_succeeded", 0))
+    long_done = result.get("long_confirmed", result.get("long_succeeded", 0))
     msg = (
-        f"Exited {result.get('short_succeeded', 0)} short legs, "
-        f"then {result.get('long_succeeded', 0)} long legs"
+        f"Exited {short_done} short legs, "
+        f"then {long_done} long legs"
     )
     if result.get("failed", 0) > 0:
         msg += f" ({result.get('failed', 0)} failed)"
+    if result.get("error"):
+        msg += f": {result.get('error')}"
     return msg
 
 

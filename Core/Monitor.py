@@ -943,11 +943,16 @@ def _empty_exit_all_result(reason=None):
         "short_failed": 0,
         "long_succeeded": 0,
         "long_failed": 0,
+        "short_confirmed": 0,
+        "short_unconfirmed": 0,
+        "long_confirmed": 0,
+        "long_unconfirmed": 0,
+        "remaining_positions": [],
         "in_progress": False,
     }
 
 
-def _exit_leg_group(legs, label):
+def _exit_leg_group(legs, label, *, fast=True):
     succeeded = 0
     failed = 0
 
@@ -957,7 +962,7 @@ def _exit_leg_group(legs, label):
     max_workers = min(4, len(legs))
     print(f"⚡ Exiting {label} legs: {len(legs)} legs (workers={max_workers})")
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = [executor.submit(exit_position, pos, None, None, True) for pos in legs]
+        futures = [executor.submit(exit_position, pos, None, None, fast) for pos in legs]
         for future in as_completed(futures):
             if future.result():
                 succeeded += 1
@@ -965,6 +970,44 @@ def _exit_leg_group(legs, label):
                 failed += 1
 
     return succeeded, failed
+
+
+def _wait_for_legs_closed(legs, label, *, timeout_sec=8.0, poll_interval_sec=0.2):
+    pending = {
+        (pos.get("exchange"), pos.get("tradingsymbol")): pos
+        for pos in legs
+    }
+    remaining_qty_by_key = {}
+    deadline = time.time() + max(0.2, float(timeout_sec))
+
+    while pending and time.time() <= deadline:
+        try:
+            open_positions = _open_option_positions_snapshot()
+            for key in list(pending.keys()):
+                exchange, symbol = key
+                matched = _resolve_open_position(open_positions, symbol, exchange=exchange)
+                current_abs_qty = abs(int(matched.get("quantity", 0))) if matched else 0
+                remaining_qty_by_key[key] = current_abs_qty
+                if current_abs_qty <= 0:
+                    pending.pop(key, None)
+        except Exception:
+            pass
+
+        if pending:
+            time.sleep(max(0.05, float(poll_interval_sec)))
+
+    confirmed = len(legs) - len(pending)
+    remaining_positions = [
+        {
+            "label": label,
+            "exchange": exchange,
+            "tradingsymbol": symbol,
+            "remaining_qty": remaining_qty_by_key.get((exchange, symbol)),
+        }
+        for exchange, symbol in pending.keys()
+    ]
+
+    return confirmed, len(pending), remaining_positions
 
 
 def exit_all_positions_short_then_long(positions, allowed_exchanges=('BFO', 'NFO', 'MCX'), reason=None):
@@ -1002,13 +1045,39 @@ def exit_all_positions_short_then_long(positions, allowed_exchanges=('BFO', 'NFO
         if short_legs:
             print("📉 Phase 1: exiting short legs first")
             result["short_succeeded"], result["short_failed"] = _exit_leg_group(short_legs, "short")
+            print("⏳ Confirming short legs are closed before exiting hedges")
+            (
+                result["short_confirmed"],
+                result["short_unconfirmed"],
+                remaining_positions,
+            ) = _wait_for_legs_closed(short_legs, "short")
+            result["remaining_positions"].extend(remaining_positions)
+
+            if result["short_unconfirmed"] > 0:
+                result["failed"] = result["short_failed"] + result["short_unconfirmed"]
+                result["error"] = "Short exits were not confirmed; skipped hedge exits to avoid RMS rejection"
+                print(f"⚠️ {result['error']}: {result['remaining_positions']}")
+                return result
 
         if long_legs:
             print("📈 Phase 2: exiting long legs after short phase completed")
-            result["long_succeeded"], result["long_failed"] = _exit_leg_group(long_legs, "long")
+            result["long_succeeded"], result["long_failed"] = _exit_leg_group(long_legs, "long", fast=False)
+            (
+                result["long_confirmed"],
+                result["long_unconfirmed"],
+                remaining_positions,
+            ) = _wait_for_legs_closed(long_legs, "long")
+            result["remaining_positions"].extend(remaining_positions)
 
         result["succeeded"] = result["short_succeeded"] + result["long_succeeded"]
-        result["failed"] = result["short_failed"] + result["long_failed"]
+        result["failed"] = (
+            result["short_failed"]
+            + result["long_failed"]
+            + result["short_unconfirmed"]
+            + result["long_unconfirmed"]
+        )
+        if result["long_unconfirmed"] > 0:
+            result["error"] = "Some hedge exits were not confirmed after order placement"
         return result
     except Exception as e:
         print(f"❌ Error in P&L monitoring: {e}")
