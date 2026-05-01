@@ -1020,6 +1020,8 @@ def exit_all_positions_short_then_long(positions, allowed_exchanges=('BFO', 'NFO
 
     try:
         print(f"Exiting all positions ({reason or 'unspecified'})...")
+        
+
         allowed_exchanges = set(allowed_exchanges)
 
         short_legs = [
@@ -1120,22 +1122,12 @@ def Exiting_closing_account(positions):
     # is_exiting = True
     try:
         print("🚨 Max loss threshold breached. Exiting all positions...")
-        # Cancel all open SL orders (no cooldown logic)
-        # orders = kite.orders()
-        # for o in orders:
-        #     if o["status"] in ["OPEN", "TRIGGER PENDING"]:
-        #         try:
-        #             kite.cancel_order(order_id=o["order_id"], variety="regular")
-        #             print(f"❌ Cancelled SL order {o['order_id']} for {o['tradingsymbol']}")
-        #             beep()
-        #         except Exception as e:
-        #             print(f"⚠️ Error cancelling SL order {o['order_id']} for {o['tradingsymbol']}: {e}")
+        
         exit_all_positions_short_then_long(
             positions,
-            allowed_exchanges=('BFO', 'NFO'),
+            allowed_exchanges=('BFO', 'NFO', 'MCX'),
             reason="threshold",
         )
-        # placed_sl_orders.clear()
         ask_and_sleep_mac()
 
     except Exception as e:
