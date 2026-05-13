@@ -57,6 +57,8 @@ Current_pos_credit = 0
 # Track exiting state
 is_exiting = False
 exit_all_lock = Lock()
+ACCOUNT_LOCK_POSITION_CHECK_SECONDS = 120
+ACCOUNT_LOCK_POSITION_POLL_SECONDS = 2
 
 
 # Track SL order IDs and matched hedge legs
@@ -155,6 +157,7 @@ def ask_and_sleep_mac():
         system_close()
         send_telegram("🚨 Max loss threshold breached. Account locked and Mac will sleep. Review the situation calmly before resuming trading.")
         motivate_trader()
+
         # print("💤 Sleeping Mac...")
         # time.sleep(60)
         # os.system("pmset sleepnow")
@@ -163,6 +166,41 @@ def ask_and_sleep_mac():
         #     print("🛑 Sleep cancelled by user.")
     except Exception as e:
         print(f"⚠️ Could not display popup or sleep: {e}")
+    finally:
+        _check_open_positions_during_account_lock()
+
+
+def _check_open_positions_during_account_lock(
+    timeout_sec=ACCOUNT_LOCK_POSITION_CHECK_SECONDS,
+    poll_interval_sec=ACCOUNT_LOCK_POSITION_POLL_SECONDS,
+):
+    deadline = time.time() + max(1, float(timeout_sec))
+    last_count = None
+
+    while time.time() < deadline:
+        try:
+            open_positions = _open_option_positions_snapshot()
+            last_count = len(open_positions)
+
+            if last_count == 0:
+                print("✅ Account lock check: no open option positions remain.")
+            else:
+                symbols = ", ".join(
+                    f"{p.get('exchange')}:{p.get('tradingsymbol')} x{p.get('quantity')}"
+                    for p in open_positions
+                )
+                print(f"🚨 Account lock check: closing {last_count} open option position(s): {symbols}")
+                exit_all_positions_short_then_long(
+                    open_positions,
+                    allowed_exchanges=('BFO', 'NFO', 'MCX'),
+                    reason="account-lock-watch",
+                )
+        except Exception as e:
+            print(f"⚠️ Account lock check could not fetch positions: {e}")
+
+        time.sleep(max(0.2, float(poll_interval_sec)))
+
+    print(f"✅ Account lock check finished after ~{int(timeout_sec)}s (last open count: {last_count})")
 
 
 def cancel_all_sl_orders(fast=False):
