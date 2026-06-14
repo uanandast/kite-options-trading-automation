@@ -8,26 +8,17 @@ Created on Sun Apr  6 13:13:02 2025
 import time
 import os
 import re
-from urllib import response
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from threading import Lock
 from kiteconnect import KiteConnect
 import configparser
-from collections import defaultdict
 from Core.system_close import system_close
-from kiteconnect import KiteTicker
 import requests
-import matplotlib.pyplot as plt
-import pandas as pd
-from pathlib import Path
 from google.genai import Client
-from google.genai.types import FunctionDeclaration, Tool, GenerateContentConfig
 
 # === Threading lock for monitor_spreads ===
 from Core.shared_resources import (
-    monitor_lock,
     set_processing_state,
-    get_processing_state,
 )
 
 
@@ -1193,7 +1184,7 @@ def monitor_spreads():
                 if threshold_breach_start is None:
                     threshold_breach_start = current_time
                 elif current_time - threshold_breach_start >= 2:
-                    if account_close ==False:
+                    if not account_close:
                         Exiting_closing_account(positions)
                         account_close = True
             else:

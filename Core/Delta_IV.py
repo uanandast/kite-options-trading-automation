@@ -6,7 +6,6 @@ from scipy.optimize import minimize_scalar, brentq
 import configparser
 import time
 import datetime as dt
-from pathlib import Path
 from Core.shared_resources import (
     clear_option_instrument_cache,
     get_option_instrument_cache,
@@ -293,7 +292,7 @@ def implied_vol(opt_value, S, K, T, r, type_='call'):
             elif type_ == 'put':
                 res = minimize_scalar(put_obj, bounds=(0.01, 3), method='bounded')
                 return res.x
-        except:
+        except:  
             pass
         return np.nan
 

@@ -1,8 +1,8 @@
-from flask import Flask, render_template, jsonify, session, redirect, url_for, request
+from flask import Flask, render_template, jsonify, request
 from threading import Thread, Lock
 from Core.shared_resources import set_monitoring_state, get_monitoring_state
 import time
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 import subprocess
 import sys
